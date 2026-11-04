@@ -15,12 +15,24 @@
     "prisma:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "prisma:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
     "db:up": "docker compose up -d",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "toolkit:smoke": "tsx scripts/toolkit-smoke.ts"
   },
   "engines": {
     "node": ">=18.18"
   },
   "dependencies": {
-    "vitest": "^3.2.7"
+    "@ai-sdk/google": "^1.2.22",
+    "@paypal/agent-toolkit": "^1.11.0",
+    "@prisma/client": "^6.19.3",
+    "ai": "^4.3.19",
+    "dotenv": "^16.4.7",
+    "express": "^5.3.0",
+    "prisma": "^6.19.3",
+    "vitest": "^3.2.7",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2"
   }
 }
