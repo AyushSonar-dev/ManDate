@@ -19,6 +19,7 @@ REPO LAYOUT
 apps/api/src/{guard,agent,paypal,redteam,routes}, apps/api/prisma, apps/web, scripts/, docs/, LICENSE (MIT), README.md, AGENTS.md
 
 HOW YOU WORK
+- For any PayPal SDK or API question, consult the APIMatic PayPal context plugin first. If it has no answer, say so and ask me. Log each use in docs/apimatic-usage.md.
 - I will give you one stage at a time. Do only that stage. Do not build or stub later stages.
 - Before coding, state your plan in at most 8 lines and list the files you will create or change.
 - Write tests first or alongside the code. Run them. Show the command and the real output.

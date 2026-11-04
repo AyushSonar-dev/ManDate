@@ -76,7 +76,12 @@ model Order {
   id               String      @id @default(uuid())
   mandateId        String
   paypalOrderId    String?     @unique
+  idempotencyKey   String      @unique
+  merchant         String
+  category         String
+  items            Json
   amountMinorUnits Int
+  feeMinorUnits    Int         @default(0)
   currency         String      @db.Char(3)
   status           OrderStatus @default(CREATED)
   approvalLink     String?

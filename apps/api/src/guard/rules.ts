@@ -3,6 +3,7 @@ export const GUARD_VERDICTS = ['ALLOW', 'REQUIRE_APPROVAL', 'BLOCK'] as const;
 export type GuardVerdict = (typeof GUARD_VERDICTS)[number];
 
 export const REASON_CODES = {
+  MANDATE_NOT_FOUND: 'MANDATE_NOT_FOUND',
   MANDATE_INACTIVE: 'MANDATE_INACTIVE',
   MANDATE_EXPIRED: 'MANDATE_EXPIRED',
   CURRENCY_MISMATCH: 'CURRENCY_MISMATCH',
@@ -14,6 +15,9 @@ export const REASON_CODES = {
   CART_TOTAL_MISMATCH: 'CART_TOTAL_MISMATCH',
   DUPLICATE_ORDER: 'DUPLICATE_ORDER',
   VELOCITY_SMALL_ORDERS: 'VELOCITY_SMALL_ORDERS',
+  INVALID_ORDER_INPUT: 'INVALID_ORDER_INPUT',
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+  PAYPAL_CALL_FAILED: 'PAYPAL_CALL_FAILED',
 } as const;
 
 export type ReasonCode = (typeof REASON_CODES)[keyof typeof REASON_CODES];
@@ -45,6 +49,7 @@ export interface ProposedOrder {
   category: string;
   currency: string;
   amountMinorUnits: number;
+  feeMinorUnits?: number;
   items: readonly OrderLineItem[];
 }
 
@@ -71,6 +76,7 @@ export const DEFAULT_RULES_POLICY: RulesPolicy = {
 };
 
 const REASON_VERDICTS: Record<ReasonCode, Exclude<GuardVerdict, 'ALLOW'>> = {
+  [REASON_CODES.MANDATE_NOT_FOUND]: 'BLOCK',
   [REASON_CODES.MANDATE_INACTIVE]: 'BLOCK',
   [REASON_CODES.MANDATE_EXPIRED]: 'BLOCK',
   [REASON_CODES.CURRENCY_MISMATCH]: 'BLOCK',
@@ -82,6 +88,9 @@ const REASON_VERDICTS: Record<ReasonCode, Exclude<GuardVerdict, 'ALLOW'>> = {
   [REASON_CODES.CART_TOTAL_MISMATCH]: 'BLOCK',
   [REASON_CODES.DUPLICATE_ORDER]: 'BLOCK',
   [REASON_CODES.VELOCITY_SMALL_ORDERS]: 'REQUIRE_APPROVAL',
+  [REASON_CODES.INVALID_ORDER_INPUT]: 'BLOCK',
+  [REASON_CODES.INTERNAL_ERROR]: 'BLOCK',
+  [REASON_CODES.PAYPAL_CALL_FAILED]: 'BLOCK',
 };
 
 function normalize(value: string): string {
@@ -170,8 +179,9 @@ export function evaluateOrder(input: {
     (total, item) => total + item.quantity * item.unitAmountMinorUnits,
     0,
   );
+  const feeMinorUnits = order.feeMinorUnits ?? 0;
 
-  if (lineItemTotalMinorUnits !== order.amountMinorUnits) {
+  if (lineItemTotalMinorUnits + feeMinorUnits !== order.amountMinorUnits) {
     addReason(REASON_CODES.CART_TOTAL_MISMATCH);
   }
 
