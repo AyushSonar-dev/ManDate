@@ -6,3 +6,121 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+enum DecisionVerdict {
+  ALLOW
+  BLOCK
+  REQUIRE_APPROVAL
+}
+
+enum OrderStatus {
+  CREATED
+  APPROVED
+  CAPTURED
+  FAILED
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  DENIED
+}
+
+enum AttackRunStatus {
+  PENDING
+  RUNNING
+  PASSED
+  FAILED
+}
+
+model Mandate {
+  id                          String   @id @default(uuid())
+  totalBudgetMinorUnits       Int
+  perPurchaseCapMinorUnits    Int
+  approvalThresholdMinorUnits Int
+  currency                    String   @db.Char(3)
+  allowedMerchants            String[]
+  allowedCategories           String[]
+  expiresAt                   DateTime
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  decisions  Decision[]
+  orders     Order[]
+  approvals  Approval[]
+  attackRuns AttackRun[]
+
+  @@map("mandates")
+}
+
+model Decision {
+  id             String          @id @default(uuid())
+  mandateId      String
+  orderId        String?
+  verdict        DecisionVerdict
+  reason         String
+  toolName       String
+  requestPayload Json?
+  createdAt      DateTime        @default(now())
+
+  mandate Mandate @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([mandateId, createdAt])
+  @@index([orderId])
+  @@map("decisions")
+}
+
+model Order {
+  id               String      @id @default(uuid())
+  mandateId        String
+  paypalOrderId    String?     @unique
+  amountMinorUnits Int
+  currency         String      @db.Char(3)
+  status           OrderStatus @default(CREATED)
+  approvalLink     String?
+  captureId        String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+
+  mandate   Mandate    @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  decisions Decision[]
+  approvals Approval[]
+
+  @@index([mandateId, createdAt])
+  @@map("orders")
+}
+
+model Approval {
+  id          String         @id @default(uuid())
+  mandateId   String
+  orderId     String?
+  status      ApprovalStatus @default(PENDING)
+  reason      String?
+  requestedAt DateTime       @default(now())
+  resolvedAt  DateTime?
+
+  mandate Mandate @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([mandateId, status])
+  @@index([orderId])
+  @@map("approvals")
+}
+
+model AttackRun {
+  id              String          @id @default(uuid())
+  mandateId       String?
+  name            String
+  status          AttackRunStatus @default(PENDING)
+  totalScenarios  Int             @default(0)
+  passedScenarios Int             @default(0)
+  results         Json?
+  startedAt       DateTime        @default(now())
+  completedAt     DateTime?
+
+  mandate Mandate? @relation(fields: [mandateId], references: [id], onDelete: SetNull)
+
+  @@index([mandateId, startedAt])
+  @@map("attack_runs")
+}
