@@ -4,6 +4,10 @@ import {
   type MandateForGuard,
   type OrderHistoryEntry,
 } from '../src/guard/rules.js';
+import type {
+  IntentCheckDecision,
+  IntentChecker,
+} from '../src/guard/intent.js';
 import {
   InvalidOrderInputError,
   mapCreateOrderArgsToProposedOrder,
@@ -170,6 +174,8 @@ function paypalResult(): Record<string, unknown> {
 function guard(options: {
   store?: FakeStore;
   createOrderExecute?: ToolExecute;
+  intentChecker?: IntentChecker;
+  userRequest?: string;
 } = {}) {
   const store = options.store ?? new FakeStore();
   const createOrderExecute =
@@ -190,10 +196,24 @@ function guard(options: {
       store,
       now: () => NOW,
       generateIdempotencyKey: () => 'idem-1',
+      ...(options.intentChecker === undefined
+        ? {}
+        : { intentChecker: options.intentChecker }),
+      ...(options.userRequest === undefined
+        ? {}
+        : { userRequest: options.userRequest }),
     },
   );
 
   return { store, tools, createOrderExecute, getOrderExecute };
+}
+
+function fakeIntent(result: IntentCheckDecision): IntentChecker & {
+  check: ReturnType<typeof vi.fn>;
+} {
+  const check = vi.fn(async () => result);
+
+  return { check };
 }
 
 describe('mapCreateOrderArgsToProposedOrder', () => {
@@ -273,6 +293,165 @@ describe('wrapToolkitTools', () => {
         approvalLink: 'https://www.sandbox.paypal.com/checkoutnow?token=1',
       },
     ]);
+  });
+
+  it('runs the intent check after an ALLOW and proceeds on match', async () => {
+    const intentChecker = fakeIntent({
+      status: 'checked',
+      match: 'match',
+      reasons: ['matches the request'],
+    });
+    const { store, tools, createOrderExecute } = guard({
+      intentChecker,
+      userRequest: 'buy a book',
+    });
+
+    const result = await tools.create_order?.execute?.(validArgs, {});
+
+    expect(result).toEqual(paypalResult());
+    expect(intentChecker.check).toHaveBeenCalledWith({
+      userRequest: 'buy a book',
+      cart: {
+        merchant: 'Amazon',
+        category: 'books',
+        currency: 'USD',
+        amountMinorUnits: 2_000,
+        feeMinorUnits: 0,
+        items: [{ name: 'A Book', quantity: 2, unitAmountMinorUnits: 1_000 }],
+      },
+    });
+    expect(createOrderExecute).toHaveBeenCalledTimes(1);
+    expect(store.decisions[0]).toMatchObject({
+      verdict: 'ALLOW',
+      requestPayload: {
+        intent: {
+          match: 'match',
+          reasons: ['matches the request'],
+        },
+      },
+    });
+  });
+
+  it.each([
+    ['partial', REASON_CODES.INTENT_PARTIAL],
+    ['mismatch', REASON_CODES.INTENT_MISMATCH],
+  ] as const)(
+    'requires approval and never calls PayPal when intent is %s',
+    async (match, reason) => {
+      const intentChecker = fakeIntent({
+        status: 'checked',
+        match,
+        reasons: ['does not fully match'],
+      });
+      const { store, tools, createOrderExecute } = guard({
+        intentChecker,
+        userRequest: 'buy a book',
+      });
+
+      const result = (await tools.create_order?.execute?.(
+        validArgs,
+        {},
+      )) as Record<string, unknown>;
+
+      expect(result).toMatchObject({
+        pending: true,
+        verdict: 'REQUIRE_APPROVAL',
+        status: 'PENDING_APPROVAL',
+      });
+      expect(result.reasons).toEqual([reason]);
+      expect(createOrderExecute).not.toHaveBeenCalled();
+      expect(store.events).not.toContain('paypal');
+      expect(store.approvals).toHaveLength(1);
+      expect(store.decisions[0]).toMatchObject({
+        verdict: 'REQUIRE_APPROVAL',
+        requestPayload: {
+          intent: {
+            match,
+            reasons: ['does not fully match'],
+          },
+        },
+      });
+    },
+  );
+
+  it('fails closed to approval when the intent checker throws', async () => {
+    const intentChecker: IntentChecker = {
+      check: vi.fn(async () => {
+        throw new Error('model unavailable');
+      }),
+    };
+    const { store, tools, createOrderExecute } = guard({
+      intentChecker,
+      userRequest: 'buy a book',
+    });
+
+    const result = (await tools.create_order?.execute?.(validArgs, {})) as Record<
+      string,
+      unknown
+    >;
+
+    expect(result).toMatchObject({
+      pending: true,
+      verdict: 'REQUIRE_APPROVAL',
+    });
+    expect(result.reasons).toEqual([REASON_CODES.INTENT_CHECK_FAILED]);
+    expect(createOrderExecute).not.toHaveBeenCalled();
+    expect(store.events).not.toContain('paypal');
+  });
+
+  it('does not run intent when Layer 1 blocks', async () => {
+    const intentChecker = fakeIntent({
+      status: 'checked',
+      match: 'match',
+      reasons: [],
+    });
+    const { tools, createOrderExecute } = guard({
+      intentChecker,
+      userRequest: 'buy a book',
+    });
+
+    const result = (await tools.create_order?.execute?.(
+      {
+        ...validArgs,
+        items: [{ name: 'Fast Laptop', quantity: 1, itemCost: 300 }],
+      },
+      {},
+    )) as Record<string, unknown>;
+
+    expect(result).toMatchObject({ blocked: true, verdict: 'BLOCK' });
+    expect(intentChecker.check).not.toHaveBeenCalled();
+    expect(createOrderExecute).not.toHaveBeenCalled();
+  });
+
+  it('does not run intent when Layer 1 already requires approval', async () => {
+    const store = new FakeStore(mandate, [
+      historyEntry(),
+      historyEntry({ amountMinorUnits: 1_100 }),
+      historyEntry({ amountMinorUnits: 1_200 }),
+    ]);
+    const intentChecker = fakeIntent({
+      status: 'checked',
+      match: 'match',
+      reasons: [],
+    });
+    const { tools, createOrderExecute } = guard({
+      store,
+      intentChecker,
+      userRequest: 'buy a book',
+    });
+
+    const result = (await tools.create_order?.execute?.(validArgs, {})) as Record<
+      string,
+      unknown
+    >;
+
+    expect(result).toMatchObject({
+      pending: true,
+      verdict: 'REQUIRE_APPROVAL',
+    });
+    expect(result.reasons).toEqual([REASON_CODES.VELOCITY_SMALL_ORDERS]);
+    expect(intentChecker.check).not.toHaveBeenCalled();
+    expect(createOrderExecute).not.toHaveBeenCalled();
   });
 
   it('returns a refusal and never calls PayPal when the guard blocks', async () => {

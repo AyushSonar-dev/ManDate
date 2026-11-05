@@ -6,6 +6,7 @@ import {
 import type {
   GuardStore,
 } from '../guard/store.js';
+import type { IntentChecker } from '../guard/intent.js';
 import {
   wrapToolkitTools,
   type ToolkitTool,
@@ -82,6 +83,7 @@ export interface ShoppingAgentOptions {
   provider: StorefrontProvider;
   store: GuardStore;
   toolkitTools: Record<string, ToolkitTool>;
+  intentChecker: IntentChecker;
   maxSteps?: number;
   onStep?: (step: AgentStepLog) => void;
   generate?: (
@@ -175,6 +177,8 @@ export async function runShoppingAgent(
       options.mandateId,
     ),
     store: options.store,
+    intentChecker: options.intentChecker,
+    userRequest: options.prompt,
   });
   const tools = {
     ...createStorefrontTools(options.provider),

@@ -10,6 +10,11 @@ import {
   type ReasonCode,
   type RulesPolicy,
 } from './rules.js';
+import type {
+  IntentCheckDecision,
+  IntentChecker,
+  IntentMatch,
+} from './intent.js';
 import {
   InvalidOrderInputError,
   mapCreateOrderArgsToProposedOrder,
@@ -41,9 +46,16 @@ export type GuardContextResolver = (
 export interface GuardedToolkitOptions {
   context: GuardToolContext | GuardContextResolver;
   store: GuardStore;
+  intentChecker?: IntentChecker;
+  userRequest?: string;
   now?: () => Date;
   policy?: Partial<RulesPolicy>;
   generateIdempotencyKey?: () => string;
+}
+
+interface IntentAudit {
+  match: IntentMatch | 'error';
+  reasons: string[];
 }
 
 export interface GuardRefusal {
@@ -98,6 +110,7 @@ function decisionInput(input: {
   proposal: ProposedOrder;
   args: Record<string, unknown>;
   idempotencyKey?: string;
+  intent?: IntentAudit;
 }): GuardDecisionInput {
   return {
     mandateId: input.mandateId,
@@ -110,6 +123,7 @@ function decisionInput(input: {
       ...(input.idempotencyKey === undefined
         ? {}
         : { idempotencyKey: input.idempotencyKey }),
+      ...(input.intent === undefined ? {} : { intent: input.intent }),
     },
   };
 }
@@ -329,6 +343,70 @@ async function guardCreateOrder(
     );
   }
 
+  let intentAudit: IntentAudit | undefined;
+
+  if (
+    guardResult.verdict === 'ALLOW' &&
+    guardedOptions.intentChecker !== undefined
+  ) {
+    let intentDecision: IntentCheckDecision;
+    const userRequest = guardedOptions.userRequest;
+
+    if (userRequest === undefined || userRequest.trim().length === 0) {
+      intentDecision = {
+        status: 'failed',
+        reasons: [REASON_CODES.INTENT_CHECK_FAILED],
+      };
+    } else {
+      try {
+        intentDecision = await guardedOptions.intentChecker.check({
+          userRequest,
+          cart: {
+            merchant: proposal.merchant,
+            category: proposal.category,
+            currency: proposal.currency,
+            amountMinorUnits: proposal.amountMinorUnits,
+            feeMinorUnits: proposal.feeMinorUnits ?? 0,
+            items: proposal.items,
+          },
+        });
+      } catch {
+        intentDecision = {
+          status: 'failed',
+          reasons: [REASON_CODES.INTENT_CHECK_FAILED],
+        };
+      }
+    }
+
+    if (intentDecision.status === 'failed') {
+      intentAudit = {
+        match: 'error',
+        reasons: intentDecision.reasons,
+      };
+      guardResult = {
+        verdict: 'REQUIRE_APPROVAL',
+        reasons: [REASON_CODES.INTENT_CHECK_FAILED],
+      };
+    } else {
+      intentAudit = {
+        match: intentDecision.match,
+        reasons: intentDecision.reasons,
+      };
+
+      if (intentDecision.match === 'partial') {
+        guardResult = {
+          verdict: 'REQUIRE_APPROVAL',
+          reasons: [REASON_CODES.INTENT_PARTIAL],
+        };
+      } else if (intentDecision.match === 'mismatch') {
+        guardResult = {
+          verdict: 'REQUIRE_APPROVAL',
+          reasons: [REASON_CODES.INTENT_MISMATCH],
+        };
+      }
+    }
+  }
+
   let idempotencyKey: string;
 
   try {
@@ -364,6 +442,7 @@ async function guardCreateOrder(
           proposal,
           args,
           idempotencyKey,
+          ...(intentAudit === undefined ? {} : { intent: intentAudit }),
         }),
       });
     } catch {
@@ -401,6 +480,7 @@ async function guardCreateOrder(
         proposal,
         args,
         idempotencyKey,
+        ...(intentAudit === undefined ? {} : { intent: intentAudit }),
       }),
     });
   } catch {

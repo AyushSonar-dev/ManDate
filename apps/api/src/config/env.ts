@@ -54,6 +54,12 @@ export const agentEnvSchema = envSchema
     CHANNEL3_CACHE_DIR: z.string().trim().min(1).default('.channel3-cache'),
     CHANNEL3_OFFLINE: envBoolean,
     AGENT_MAX_STEPS: z.coerce.number().int().positive().max(20).default(8),
+    INTENT_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .max(60_000)
+      .default(5_000),
   })
   .superRefine((environment, context) => {
     if (

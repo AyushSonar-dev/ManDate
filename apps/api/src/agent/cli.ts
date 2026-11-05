@@ -2,6 +2,7 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
 import { loadAgentEnv } from '../config/env.js';
 import { prisma } from '../db/prisma.js';
+import { createIntentChecker } from '../guard/intent.js';
 import { PrismaGuardStore } from '../guard/store.js';
 import type { ToolkitTool } from '../guard/tool-wrapper.js';
 import { parseAgentCliArgs } from './cli-args.js';
@@ -49,6 +50,10 @@ async function main(): Promise<void> {
     apiKey: env.GOOGLE_GENERATIVE_AI_API_KEY,
   });
   const model = google(env.GOOGLE_MODEL);
+  const intentChecker = createIntentChecker({
+    model,
+    timeoutMs: env.INTENT_TIMEOUT_MS,
+  });
   const result = await runShoppingAgent({
     mandateId: args.mandateId,
     prompt: args.prompt,
@@ -56,6 +61,7 @@ async function main(): Promise<void> {
     provider,
     store: new PrismaGuardStore(prisma),
     toolkitTools: toolkit.getTools() as unknown as Record<string, ToolkitTool>,
+    intentChecker,
     maxSteps: env.AGENT_MAX_STEPS,
     onStep: printStep,
   });
