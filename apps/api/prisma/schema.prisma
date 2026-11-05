@@ -39,6 +39,7 @@ model Mandate {
   totalBudgetMinorUnits       Int
   perPurchaseCapMinorUnits    Int
   approvalThresholdMinorUnits Int
+  spentMinorUnits             Int      @default(0)
   currency                    String   @db.Char(3)
   allowedMerchants            String[]
   allowedCategories           String[]
@@ -103,6 +104,7 @@ model Approval {
   orderId     String?
   status      ApprovalStatus @default(PENDING)
   reason      String?
+  resolvedBy  String?
   requestedAt DateTime       @default(now())
   resolvedAt  DateTime?
 

@@ -84,7 +84,7 @@ function orderData(input: GuardOrderInput): Prisma.OrderUncheckedCreateInput {
   };
 }
 
-function parseStoredItems(value: Prisma.JsonValue): OrderLineItem[] {
+export function parseStoredItems(value: Prisma.JsonValue): OrderLineItem[] {
   if (!Array.isArray(value)) {
     throw new Error('Stored order items are not an array');
   }

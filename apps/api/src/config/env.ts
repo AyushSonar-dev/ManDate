@@ -71,6 +71,18 @@ export const agentEnvSchema = envSchema
 
 export type AgentEnv = z.infer<typeof agentEnvSchema>;
 
+export const serverEnvSchema = envSchema.extend({
+  PAYPAL_ENV: z.literal('sandbox').default('sandbox'),
+  PAYPAL_CLIENT_ID: z.string().trim().min(1, 'PAYPAL_CLIENT_ID is required'),
+  PAYPAL_CLIENT_SECRET: z
+    .string()
+    .trim()
+    .min(1, 'PAYPAL_CLIENT_SECRET is required'),
+  APP_BASE_URL: z.string().url().default('http://localhost:3000'),
+});
+
+export type ServerEnv = z.infer<typeof serverEnvSchema>;
+
 function envError(error: z.ZodError): Error {
   const details = error.issues
     .map((issue) => `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`)
@@ -103,6 +115,18 @@ export function parseAgentEnv(
   return result.data;
 }
 
+export function parseServerEnv(
+  input: NodeJS.ProcessEnv = process.env,
+): ServerEnv {
+  const result = serverEnvSchema.safeParse(input);
+
+  if (!result.success) {
+    throw envError(result.error);
+  }
+
+  return result.data;
+}
+
 export function loadEnv(): Env {
   const workingDirectory = process.cwd();
 
@@ -127,4 +151,17 @@ export function loadAgentEnv(): AgentEnv {
   });
 
   return parseAgentEnv(process.env);
+}
+
+export function loadServerEnv(): ServerEnv {
+  const workingDirectory = process.cwd();
+
+  dotenv.config({
+    path: [
+      path.resolve(workingDirectory, '.env'),
+      path.resolve(workingDirectory, '../../.env'),
+    ],
+  });
+
+  return parseServerEnv(process.env);
 }

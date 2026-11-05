@@ -4,7 +4,7 @@ A spending-authorization layer for AI shopping agents. Every PayPal tool call is
 
 ## Status
 
-Stage 5: mock and Channel3 storefronts, plus a guarded PayPal shopping agent with a CLI.
+Stage 6: approval review and sandbox capture, with an order receipt containing the full decision trail.
 
 ## Requirements
 
@@ -44,6 +44,28 @@ npm run agent -- --mandate <id> "buy wireless headphones under 40 dollars"
 The agent searches the storefront, inspects full product pages, and calls the guarded PayPal `create_order` tool. Every reasoning step, tool call and tool result is logged. A blocked or approval-required order never reaches PayPal.
 
 The mock catalog (`apps/api/data/catalog.json`) is the default and is used by tests and the red-team suite. For the live demo, set `STOREFRONT_PROVIDER=channel3` and `CHANNEL3_API_KEY`. Channel3 responses are cached under `CHANNEL3_CACHE_DIR`; set `CHANNEL3_OFFLINE=true` to replay cached responses without network access or an API key.
+
+## Approvals and receipts
+
+When the guard returns `REQUIRE_APPROVAL`, review the pending approval:
+
+```bash
+curl http://localhost:3000/approvals?status=PENDING
+```
+
+Approving re-runs the guard before anything is sent to PayPal. If the order is still allowed, the API creates a PayPal sandbox order and returns `202 PENDING_BUYER_APPROVAL` with the approval link. Approve the order in the PayPal sandbox, then call approve again to capture it. Spent budget is only updated after a `COMPLETED` capture.
+
+```bash
+curl -X POST http://localhost:3000/approvals/<id>/approve \
+  -H 'content-type: application/json' \
+  -d '{"approvedBy":"buyer"}'
+
+curl -X POST http://localhost:3000/approvals/<id>/reject \
+  -H 'content-type: application/json' \
+  -d '{"rejectedBy":"buyer"}'
+
+curl http://localhost:3000/orders/<order-id>/receipt
+```
 
 ## Checks
 
