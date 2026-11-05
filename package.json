@@ -16,6 +16,7 @@
     "prisma:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
+    "agent": "tsx apps/api/src/agent/cli.ts",
     "toolkit:smoke": "tsx scripts/toolkit-smoke.ts"
   },
   "engines": {

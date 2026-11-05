@@ -4,7 +4,7 @@ A spending-authorization layer for AI shopping agents. Every PayPal tool call is
 
 ## Status
 
-Stage 0: monorepo scaffold. No PayPal, AI, or business logic yet.
+Stage 5: mock and Channel3 storefronts, plus a guarded PayPal shopping agent with a CLI.
 
 ## Requirements
 
@@ -32,6 +32,18 @@ The API listens on `http://localhost:3000`. Check health:
 curl http://localhost:3000/health
 # {"ok":true}
 ```
+
+## Shopping agent
+
+Create a mandate through `POST /mandates`, then run the agent:
+
+```bash
+npm run agent -- --mandate <id> "buy wireless headphones under 40 dollars"
+```
+
+The agent searches the storefront, inspects full product pages, and calls the guarded PayPal `create_order` tool. Every reasoning step, tool call and tool result is logged. A blocked or approval-required order never reaches PayPal.
+
+The mock catalog (`apps/api/data/catalog.json`) is the default and is used by tests and the red-team suite. For the live demo, set `STOREFRONT_PROVIDER=channel3` and `CHANNEL3_API_KEY`. Channel3 responses are cached under `CHANNEL3_CACHE_DIR`; set `CHANNEL3_OFFLINE=true` to replay cached responses without network access or an API key.
 
 ## Checks
 

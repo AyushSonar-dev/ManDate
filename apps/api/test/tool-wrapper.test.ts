@@ -403,4 +403,35 @@ describe('wrapToolkitTools', () => {
     expect(getOrderExecute).toHaveBeenCalledTimes(1);
     expect(store.events).toHaveLength(0);
   });
+
+  it('resolves guard context from the order arguments', async () => {
+    const store = new FakeStore();
+    const createOrderExecute = vi.fn(async () => {
+      store.events.push('paypal');
+      return paypalResult();
+    });
+    const resolveContext = vi.fn(async (args: Record<string, unknown>) => {
+      expect(args).toEqual(validArgs);
+      return context;
+    });
+    const tools = wrapToolkitTools(
+      { create_order: tool(createOrderExecute) },
+      {
+        context: resolveContext,
+        store,
+        now: () => NOW,
+        generateIdempotencyKey: () => 'idem-dynamic',
+      },
+    );
+
+    const result = await tools.create_order?.execute?.(validArgs, {});
+
+    expect(result).toEqual(paypalResult());
+    expect(resolveContext).toHaveBeenCalledWith(validArgs);
+    expect(store.orders[0]).toMatchObject({
+      merchant: 'Amazon',
+      category: 'books',
+      idempotencyKey: 'idem-dynamic',
+    });
+  });
 });

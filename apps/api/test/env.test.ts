@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseEnv } from '../src/config/env.js';
+import { parseAgentEnv, parseEnv } from '../src/config/env.js';
 
 const validEnvironment = {
   NODE_ENV: 'test',
@@ -47,5 +47,88 @@ describe('parseEnv', () => {
     expect(() =>
       parseEnv({ ...validEnvironment, NODE_ENV: 'staging' }),
     ).toThrowError(/NODE_ENV/);
+  });
+});
+
+const validAgentEnvironment = {
+  ...validEnvironment,
+  PAYPAL_ENV: 'sandbox',
+  PAYPAL_CLIENT_ID: 'client-id',
+  PAYPAL_CLIENT_SECRET: 'client-secret',
+  GOOGLE_GENERATIVE_AI_API_KEY: 'google-key',
+};
+
+describe('parseAgentEnv', () => {
+  it('applies safe agent defaults', () => {
+    const env = parseAgentEnv(validAgentEnvironment);
+
+    expect(env).toMatchObject({
+      PAYPAL_ENV: 'sandbox',
+      STOREFRONT_PROVIDER: 'mock',
+      GOOGLE_MODEL: 'gemini-2.5-flash',
+      CHANNEL3_BASE_URL: 'https://api.trychannel3.com',
+      CHANNEL3_CACHE_DIR: '.channel3-cache',
+      CHANNEL3_OFFLINE: false,
+      AGENT_MAX_STEPS: 8,
+    });
+  });
+
+  it('rejects PayPal environments other than sandbox', () => {
+    expect(() =>
+      parseAgentEnv({ ...validAgentEnvironment, PAYPAL_ENV: 'live' }),
+    ).toThrowError(/PAYPAL_ENV/);
+  });
+
+  it('requires PayPal and Google credentials', () => {
+    expect(() =>
+      parseAgentEnv({ ...validAgentEnvironment, PAYPAL_CLIENT_ID: '' }),
+    ).toThrowError(/PAYPAL_CLIENT_ID/);
+    expect(() =>
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        GOOGLE_GENERATIVE_AI_API_KEY: '',
+      }),
+    ).toThrowError(/GOOGLE_GENERATIVE_AI_API_KEY/);
+  });
+
+  it('requires a Channel3 key only when the live provider is selected', () => {
+    expect(() =>
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        STOREFRONT_PROVIDER: 'channel3',
+      }),
+    ).toThrowError(/CHANNEL3_API_KEY/);
+
+    expect(
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        STOREFRONT_PROVIDER: 'channel3',
+        CHANNEL3_API_KEY: 'channel3-key',
+        CHANNEL3_OFFLINE: 'true',
+      }),
+    ).toMatchObject({
+      STOREFRONT_PROVIDER: 'channel3',
+      CHANNEL3_API_KEY: 'channel3-key',
+      CHANNEL3_OFFLINE: true,
+    });
+  });
+
+  it('allows offline Channel3 replay without an API key', () => {
+    expect(
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        STOREFRONT_PROVIDER: 'channel3',
+        CHANNEL3_OFFLINE: 'true',
+      }),
+    ).toMatchObject({
+      STOREFRONT_PROVIDER: 'channel3',
+      CHANNEL3_OFFLINE: true,
+    });
+  });
+
+  it('rejects invalid agent max steps', () => {
+    expect(() =>
+      parseAgentEnv({ ...validAgentEnvironment, AGENT_MAX_STEPS: '0' }),
+    ).toThrowError(/AGENT_MAX_STEPS/);
   });
 });

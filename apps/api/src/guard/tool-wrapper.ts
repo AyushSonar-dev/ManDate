@@ -34,8 +34,12 @@ export interface GuardToolContext extends OrderContext {
   mandateId: string;
 }
 
+export type GuardContextResolver = (
+  args: Record<string, unknown>,
+) => PromiseLike<GuardToolContext> | GuardToolContext;
+
 export interface GuardedToolkitOptions {
-  context: GuardToolContext;
+  context: GuardToolContext | GuardContextResolver;
   store: GuardStore;
   now?: () => Date;
   policy?: Partial<RulesPolicy>;
@@ -192,10 +196,24 @@ async function guardCreateOrder(
   options: unknown,
   guardedOptions: GuardedToolkitOptions,
 ): Promise<unknown> {
-  const { context, store } = guardedOptions;
+  const { store } = guardedOptions;
   const now = guardedOptions.now ?? (() => new Date());
   const generateIdempotencyKey =
     guardedOptions.generateIdempotencyKey ?? (() => randomUUID());
+
+  let context: GuardToolContext;
+
+  try {
+    context =
+      typeof guardedOptions.context === 'function'
+        ? await guardedOptions.context(args)
+        : guardedOptions.context;
+  } catch {
+    return refusal(
+      [REASON_CODES.INVALID_ORDER_INPUT],
+      'Blocked: order context could not be resolved',
+    );
+  }
 
   let proposal: ProposedOrder;
 
