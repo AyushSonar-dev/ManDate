@@ -4,7 +4,7 @@ A spending-authorization layer for AI shopping agents. Every PayPal tool call is
 
 ## Status
 
-Stage 6: approval review and sandbox capture, with an order receipt containing the full decision trail.
+Stage 7: deterministic guard rules plus a fail-closed AI intent check, approval review, sandbox capture, and order receipts.
 
 ## Requirements
 
@@ -42,6 +42,8 @@ npm run agent -- --mandate <id> "buy wireless headphones under 40 dollars"
 ```
 
 The agent searches the storefront, inspects full product pages, and calls the guarded PayPal `create_order` tool. Every reasoning step, tool call and tool result is logged. A blocked or approval-required order never reaches PayPal.
+
+After the deterministic rules return `ALLOW`, a second intent check compares the user's original request with the proposed cart. Product names and other cart text are passed to the model as untrusted, delimited data. A partial or mismatched intent, malformed JSON, a model error, or a timeout all require approval. A deterministic `BLOCK` is never loosened. Configure the timeout with `INTENT_TIMEOUT_MS` (default 5000).
 
 The mock catalog (`apps/api/data/catalog.json`) is the default and is used by tests and the red-team suite. For the live demo, set `STOREFRONT_PROVIDER=channel3` and `CHANNEL3_API_KEY`. Channel3 responses are cached under `CHANNEL3_CACHE_DIR`; set `CHANNEL3_OFFLINE=true` to replay cached responses without network access or an API key.
 

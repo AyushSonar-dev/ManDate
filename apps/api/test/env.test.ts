@@ -70,6 +70,7 @@ describe('parseAgentEnv', () => {
       CHANNEL3_CACHE_DIR: '.channel3-cache',
       CHANNEL3_OFFLINE: false,
       AGENT_MAX_STEPS: 8,
+      INTENT_TIMEOUT_MS: 5_000,
     });
   });
 
@@ -130,5 +131,14 @@ describe('parseAgentEnv', () => {
     expect(() =>
       parseAgentEnv({ ...validAgentEnvironment, AGENT_MAX_STEPS: '0' }),
     ).toThrowError(/AGENT_MAX_STEPS/);
+  });
+
+  it('rejects invalid intent timeouts', () => {
+    expect(() =>
+      parseAgentEnv({ ...validAgentEnvironment, INTENT_TIMEOUT_MS: '0' }),
+    ).toThrowError(/INTENT_TIMEOUT_MS/);
+    expect(() =>
+      parseAgentEnv({ ...validAgentEnvironment, INTENT_TIMEOUT_MS: '60001' }),
+    ).toThrowError(/INTENT_TIMEOUT_MS/);
   });
 });

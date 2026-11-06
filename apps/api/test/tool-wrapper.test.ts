@@ -399,6 +399,29 @@ describe('wrapToolkitTools', () => {
     expect(store.events).not.toContain('paypal');
   });
 
+  it('fails closed when the intent checker is configured without a user request', async () => {
+    const intentChecker = fakeIntent({
+      status: 'checked',
+      match: 'match',
+      reasons: [],
+    });
+    const { store, tools, createOrderExecute } = guard({ intentChecker });
+
+    const result = (await tools.create_order?.execute?.(validArgs, {})) as Record<
+      string,
+      unknown
+    >;
+
+    expect(result).toMatchObject({
+      pending: true,
+      verdict: 'REQUIRE_APPROVAL',
+    });
+    expect(result.reasons).toEqual([REASON_CODES.INTENT_CHECK_FAILED]);
+    expect(intentChecker.check).not.toHaveBeenCalled();
+    expect(createOrderExecute).not.toHaveBeenCalled();
+    expect(store.events).not.toContain('paypal');
+  });
+
   it('does not run intent when Layer 1 blocks', async () => {
     const intentChecker = fakeIntent({
       status: 'checked',

@@ -10,6 +10,10 @@ import type {
   GuardOrderInput,
   GuardStore,
 } from '../../src/guard/store.js';
+import type {
+  IntentCheckInput,
+  IntentChecker,
+} from '../../src/guard/intent.js';
 import type { ToolkitTool } from '../../src/guard/tool-wrapper.js';
 import { MockStorefrontProvider } from '../../src/storefront/mock-provider.js';
 
@@ -197,6 +201,20 @@ function orderGeneration(input: {
   })();
 }
 
+function intentChecker(
+  result: { match: 'match' | 'partial' | 'mismatch'; reasons: string[] } = {
+    match: 'match',
+    reasons: [],
+  },
+): IntentChecker & { check: ReturnType<typeof vi.fn> } {
+  return {
+    check: vi.fn(async (_input: IntentCheckInput) => ({
+      status: 'checked' as const,
+      ...result,
+    })),
+  };
+}
+
 function toolkitTools(createOrder: NonNullable<ToolkitTool['execute']>): {
   tools: Record<string, ToolkitTool>;
   createOrder: ReturnType<typeof vi.fn>;
@@ -220,6 +238,7 @@ describe('runShoppingAgent', () => {
       return paypalResult();
     });
     const onStep = vi.fn();
+    const intent = intentChecker();
     let request: ShoppingAgentRequest | undefined;
 
     const result = await runShoppingAgent({
@@ -229,6 +248,7 @@ describe('runShoppingAgent', () => {
       provider,
       store,
       toolkitTools: paypal.tools,
+      intentChecker: intent,
       onStep,
       generate: async (generationRequest) => {
         request = generationRequest;
@@ -244,6 +264,11 @@ describe('runShoppingAgent', () => {
     expect(request?.maxSteps).toBe(8);
     expect(request?.system).toContain('Allowed merchants: soundhouse');
     expect(paypal.createOrder).toHaveBeenCalledTimes(1);
+    expect(intent.check).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userRequest: 'buy wireless headphones under 40 dollars',
+      }),
+    );
     expect(store.orders[0]).toMatchObject({
       mandateId: 'mandate-1',
       merchant: 'soundhouse',
@@ -266,6 +291,7 @@ describe('runShoppingAgent', () => {
       store.events.push('paypal');
       return paypalResult();
     });
+    const intent = intentChecker();
     let createResult: unknown;
 
     await runShoppingAgent({
@@ -275,6 +301,7 @@ describe('runShoppingAgent', () => {
       provider: new MockStorefrontProvider(),
       store,
       toolkitTools: paypal.tools,
+      intentChecker: intent,
       generate: async (generationRequest) => {
         createResult = await executeTool(
           generationRequest.tools,
@@ -318,5 +345,6 @@ describe('runShoppingAgent', () => {
     expect(store.decisions[0]?.reasons).toContain(
       'PER_PURCHASE_CAP_EXCEEDED',
     );
+    expect(intent.check).not.toHaveBeenCalled();
   });
 });
