@@ -1,9 +1,15 @@
 import { Router } from 'express';
-import type { ZodError } from 'zod';
+import { z, type ZodError } from 'zod';
 import { prisma } from '../db/prisma.js';
 import { createMandateSchema } from '../mandates/schema.js';
+import { reasonsFromDecision } from '../orders/receipt.js';
 
 export const mandatesRouter = Router();
+
+const decisionsQuerySchema = z.object({
+  since: z.coerce.date().optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
 
 function validationDetails(error: ZodError): Array<{ path: string; message: string }> {
   return error.issues.map((issue) => ({
@@ -41,6 +47,50 @@ mandatesRouter.get('/', async (_request, response, next) => {
     });
 
     response.status(200).json(mandates);
+  } catch (error) {
+    next(error);
+  }
+});
+
+mandatesRouter.get('/:id/decisions', async (request, response, next) => {
+  try {
+    const parsed = decisionsQuerySchema.safeParse(request.query);
+
+    if (!parsed.success) {
+      response.status(400).json({
+        error: 'Invalid decision filter',
+        details: validationDetails(parsed.error),
+      });
+      return;
+    }
+
+    const mandate = await prisma.mandate.findUnique({
+      where: { id: request.params.id },
+      select: { id: true },
+    });
+
+    if (!mandate) {
+      response.status(404).json({ error: 'Mandate not found' });
+      return;
+    }
+
+    const decisions = await prisma.decision.findMany({
+      where: {
+        mandateId: request.params.id,
+        ...(parsed.data.since === undefined
+          ? {}
+          : { createdAt: { gte: parsed.data.since } }),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: parsed.data.limit,
+    });
+
+    response.status(200).json(
+      decisions.map((decision) => ({
+        ...decision,
+        reasons: reasonsFromDecision(decision),
+      })),
+    );
   } catch (error) {
     next(error);
   }

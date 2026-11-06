@@ -5,7 +5,7 @@ import {
 } from '@prisma/client';
 import { GUARD_RULE_CODES, type ReasonCode } from '../guard/rules.js';
 
-function reasonsFromDecision(decision: Decision): ReasonCode[] {
+export function reasonsFromDecision(decision: Decision): ReasonCode[] {
   if (
     decision.reason.length === 0 ||
     decision.reason === decision.verdict

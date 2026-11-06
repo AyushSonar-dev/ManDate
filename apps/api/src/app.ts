@@ -5,21 +5,25 @@ import express, {
   type Request,
   type Response,
 } from 'express';
+import type { AgentRunner } from './agent/service.js';
 import {
   createApprovalService,
   type ApprovalService,
 } from './approvals/service.js';
 import { prisma } from './db/prisma.js';
 import type { PaypalOrders } from './paypal/orders.js';
+import { createAgentRouter } from './routes/agent.js';
 import { healthRouter } from './routes/health.js';
 import { mandatesRouter } from './routes/mandates.js';
 import { createApprovalsRouter } from './routes/approvals.js';
 import { createOrdersRouter } from './routes/orders.js';
+import { createScorecardRouter } from './routes/scorecard.js';
 
 export interface AppDependencies {
   prisma?: PrismaClient;
   paypalOrders?: PaypalOrders;
   approvalService?: ApprovalService;
+  agentRunner?: AgentRunner;
   appBaseUrl?: string;
 }
 
@@ -43,6 +47,8 @@ export function createApp(dependencies: AppDependencies = {}): Express {
   app.use('/health', healthRouter);
   app.use('/mandates', mandatesRouter);
   app.use('/orders', createOrdersRouter(prismaClient));
+  app.use('/scorecard', createScorecardRouter(prismaClient));
+  app.use('/agent', createAgentRouter(dependencies.agentRunner ?? null));
 
   if (approvalService !== null) {
     app.use('/approvals', createApprovalsRouter(approvalService));

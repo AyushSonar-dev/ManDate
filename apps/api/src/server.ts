@@ -1,5 +1,7 @@
+import { createLazyAgentRunner } from './agent/service.js';
 import { createApp } from './app.js';
 import { loadServerEnv } from './config/env.js';
+import { prisma } from './db/prisma.js';
 import { createToolkitPaypalOrders } from './paypal/orders.js';
 
 const env = loadServerEnv();
@@ -11,6 +13,7 @@ const paypalOrders = createToolkitPaypalOrders({
 const app = createApp({
   paypalOrders,
   appBaseUrl: env.APP_BASE_URL,
+  agentRunner: createLazyAgentRunner(prisma),
 });
 
 const server = app.listen(env.PORT, () => {

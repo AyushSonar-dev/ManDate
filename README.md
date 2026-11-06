@@ -4,11 +4,11 @@ A spending-authorization layer for AI shopping agents. Every PayPal tool call is
 
 ## Status
 
-Stage 8: deterministic guard rules, a fail-closed AI intent check, approval review, sandbox capture, order receipts, and a red-team suite with a model-generated held-out set.
+Stage 9: deterministic guard rules, a fail-closed AI intent check, approval review, sandbox capture, order receipts, a red-team suite with a model-generated held-out set, and a Next.js web console.
 
 ## Requirements
 
-- Node.js 18.18+
+- Node.js 20.9+
 - Docker (for PostgreSQL)
 
 ## Setup
@@ -22,8 +22,11 @@ npm run prisma:generate
 
 ## Development
 
+Run the API and web console in separate terminals:
+
 ```bash
-npm run dev
+npm run dev      # API on http://localhost:3000
+npm run dev:web  # web console on http://localhost:3001
 ```
 
 The API listens on `http://localhost:3000`. Check health:
@@ -32,6 +35,18 @@ The API listens on `http://localhost:3000`. Check health:
 curl http://localhost:3000/health
 # {"ok":true}
 ```
+
+## Web console
+
+Open `http://localhost:3001`. The web app proxies `/api/*` to `API_BASE_URL` (default `http://localhost:3000`).
+
+- `/mandate` creates and displays the current spending mandate.
+- `/run` runs the shopping agent and polls the audit log for live guarded decisions.
+- `/approvals` lists pending approvals and resolves them.
+- `/orders/[id]` shows an order receipt, decision trail, rules, and approvals.
+- `/scorecard` shows the latest persisted red-team run.
+
+The supporting API endpoints are `GET /mandates/:id/decisions`, `GET /scorecard/latest`, and `POST /agent/runs`.
 
 ## Shopping agent
 

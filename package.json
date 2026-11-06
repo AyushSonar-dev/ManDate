@@ -8,10 +8,14 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace @mandate/api",
-    "build": "npm run build --workspace @mandate/api",
+    "dev:api": "npm run dev --workspace @mandate/api",
+    "dev:web": "npm run dev --workspace @mandate/web",
+    "build": "npm run build --workspace @mandate/api && npm run build --workspace @mandate/web",
+    "build:api": "npm run build --workspace @mandate/api",
+    "build:web": "npm run build --workspace @mandate/web",
     "start": "npm run start --workspace @mandate/api",
     "test": "npm run test --workspace @mandate/api",
-    "typecheck": "npm run typecheck --workspace @mandate/api",
+    "typecheck": "npm run typecheck --workspace @mandate/api && npm run typecheck --workspace @mandate/web",
     "prisma:generate": "prisma generate --schema apps/api/prisma/schema.prisma",
     "prisma:validate": "prisma validate --schema apps/api/prisma/schema.prisma",
     "db:up": "docker compose up -d",
@@ -22,7 +26,7 @@
     "redteam:generate-heldout": "tsx scripts/generate-redteam-heldout.ts"
   },
   "engines": {
-    "node": ">=18.18"
+    "node": ">=20.9"
   },
   "dependencies": {
     "@ai-sdk/google": "^1.2.22",
