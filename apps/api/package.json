@@ -13,7 +13,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
-    "prisma:validate": "prisma validate"
+    "prisma:validate": "prisma validate",
+    "redteam": "tsx src/redteam/cli.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.2.1",

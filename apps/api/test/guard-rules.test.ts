@@ -260,9 +260,25 @@ describe('evaluateOrder', () => {
       items: [{ name: 'Laptop', quantity: 1, unitAmountMinorUnits: 15_000 }],
     });
 
-    expect(evaluate(largeOrder, priorSmallOrders)).toEqual({
+    expect(
+      evaluate(largeOrder, priorSmallOrders, {
+        approvalThresholdMinorUnits: 20_000,
+      }),
+    ).toEqual({
       verdict: 'ALLOW',
       reasons: [],
+    });
+  });
+
+  it('requires approval above the approval threshold', () => {
+    const aboveThreshold = order({
+      amountMinorUnits: 10_001,
+      items: [{ name: 'A Book', quantity: 1, unitAmountMinorUnits: 10_001 }],
+    });
+
+    expect(evaluate(aboveThreshold)).toEqual({
+      verdict: 'REQUIRE_APPROVAL',
+      reasons: [REASON_CODES.APPROVAL_THRESHOLD_EXCEEDED],
     });
   });
 

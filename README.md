@@ -4,7 +4,7 @@ A spending-authorization layer for AI shopping agents. Every PayPal tool call is
 
 ## Status
 
-Stage 7: deterministic guard rules plus a fail-closed AI intent check, approval review, sandbox capture, and order receipts.
+Stage 8: deterministic guard rules, a fail-closed AI intent check, approval review, sandbox capture, order receipts, and a red-team suite with a model-generated held-out set.
 
 ## Requirements
 
@@ -68,6 +68,30 @@ curl -X POST http://localhost:3000/approvals/<id>/reject \
 
 curl http://localhost:3000/orders/<order-id>/receipt
 ```
+
+## Red-team suite
+
+Run the 14 core attack scenarios against a fresh mandate per scenario:
+
+```bash
+npm run redteam -- --set=core
+```
+
+Each run persists an `attack_runs` row with the full scenario results and prints pass counts per category. Any failure prints the full decision trail: mandate, cart, history, deterministic verdict and reasons, intent result, and final verdict.
+
+The held-out set contains 12 independently generated attack variants. It is not used to tune the guard rules:
+
+```bash
+npm run redteam -- --set=heldout
+```
+
+Regenerate the held-out artifact with the configured model when needed:
+
+```bash
+npm run redteam:generate-heldout
+```
+
+The generated file is `apps/api/src/redteam/heldout.generated.json`.
 
 ## Checks
 

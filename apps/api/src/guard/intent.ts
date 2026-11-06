@@ -1,6 +1,10 @@
 import { generateObject, jsonSchema, type LanguageModel } from 'ai';
 import { z } from 'zod';
-import { REASON_CODES, type ReasonCode } from './rules.js';
+import {
+  REASON_CODES,
+  type GuardResult,
+  type ReasonCode,
+} from './rules.js';
 
 export const INTENT_MATCHES = ['match', 'partial', 'mismatch'] as const;
 
@@ -58,6 +62,33 @@ export type IntentGenerate = (
 
 export interface IntentChecker {
   check(input: IntentCheckInput): Promise<IntentCheckDecision>;
+}
+
+export function guardResultForIntent(
+  decision: IntentCheckDecision,
+): GuardResult {
+  if (decision.status === 'failed') {
+    return {
+      verdict: 'REQUIRE_APPROVAL',
+      reasons: [REASON_CODES.INTENT_CHECK_FAILED],
+    };
+  }
+
+  if (decision.match === 'partial') {
+    return {
+      verdict: 'REQUIRE_APPROVAL',
+      reasons: [REASON_CODES.INTENT_PARTIAL],
+    };
+  }
+
+  if (decision.match === 'mismatch') {
+    return {
+      verdict: 'REQUIRE_APPROVAL',
+      reasons: [REASON_CODES.INTENT_MISMATCH],
+    };
+  }
+
+  return { verdict: 'ALLOW', reasons: [] };
 }
 
 export interface CreateIntentCheckerOptions {

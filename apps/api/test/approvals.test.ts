@@ -391,7 +391,7 @@ describe('GET /orders/:id/receipt', () => {
       captureId: 'CAPTURE-1',
       approvedBy: 'alice',
       rules: {
-        failed: [],
+        failed: ['APPROVAL_THRESHOLD_EXCEEDED'],
       },
     });
     expect(response.body.decisions).toEqual([
@@ -400,9 +400,9 @@ describe('GET /orders/:id/receipt', () => {
         toolName: 'create_order',
       }),
       expect.objectContaining({
-        verdict: 'ALLOW',
+        verdict: 'REQUIRE_APPROVAL',
         toolName: 'approval_rerun',
-        reasons: [],
+        reasons: ['APPROVAL_THRESHOLD_EXCEEDED'],
       }),
     ]);
     expect(response.body.approvals).toEqual([

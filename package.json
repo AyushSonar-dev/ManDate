@@ -17,7 +17,9 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "agent": "tsx apps/api/src/agent/cli.ts",
-    "toolkit:smoke": "tsx scripts/toolkit-smoke.ts"
+    "toolkit:smoke": "tsx scripts/toolkit-smoke.ts",
+    "redteam": "tsx apps/api/src/redteam/cli.ts",
+    "redteam:generate-heldout": "tsx scripts/generate-redteam-heldout.ts"
   },
   "engines": {
     "node": ">=18.18"

@@ -10,10 +10,11 @@ import {
   type ReasonCode,
   type RulesPolicy,
 } from './rules.js';
-import type {
-  IntentCheckDecision,
-  IntentChecker,
-  IntentMatch,
+import {
+  guardResultForIntent,
+  type IntentCheckDecision,
+  type IntentChecker,
+  type IntentMatch,
 } from './intent.js';
 import {
   InvalidOrderInputError,
@@ -383,28 +384,14 @@ async function guardCreateOrder(
         match: 'error',
         reasons: intentDecision.reasons,
       };
-      guardResult = {
-        verdict: 'REQUIRE_APPROVAL',
-        reasons: [REASON_CODES.INTENT_CHECK_FAILED],
-      };
     } else {
       intentAudit = {
         match: intentDecision.match,
         reasons: intentDecision.reasons,
       };
-
-      if (intentDecision.match === 'partial') {
-        guardResult = {
-          verdict: 'REQUIRE_APPROVAL',
-          reasons: [REASON_CODES.INTENT_PARTIAL],
-        };
-      } else if (intentDecision.match === 'mismatch') {
-        guardResult = {
-          verdict: 'REQUIRE_APPROVAL',
-          reasons: [REASON_CODES.INTENT_MISMATCH],
-        };
-      }
     }
+
+    guardResult = guardResultForIntent(intentDecision);
   }
 
   let idempotencyKey: string;
