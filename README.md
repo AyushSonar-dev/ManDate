@@ -72,7 +72,7 @@ curl http://localhost:4000/agent/runs/<run-id>
 
 ## LLM providers
 
-`LLM_CHAIN` is an ordered list of `provider:model` entries. Supported providers are `groq`, `cerebras`, `gemini`, and `openrouter`. The agent only falls back to the next entry on an HTTP `429` or `5xx`, and never after a tool call has executed. Each entry uses one retry.
+`LLM_CHAIN` is an ordered list of `provider:model` entries. Supported providers are `groq`, `cerebras`, `gemini`, `openrouter`, and `github`. GitHub Models use `github:<model-id>` (for example `github:openai/gpt-4.1`) with `GITHUB_MODELS_TOKEN`. The agent only falls back to the next entry on an HTTP `429` or `5xx`, and never after a tool call has executed. Each entry uses one retry.
 
 ```bash
 LLM_CHAIN=groq:llama-3.3-70b-versatile,cerebras:llama-3.3-70b,gemini:gemini-2.5-flash
@@ -81,13 +81,16 @@ CEREBRAS_API_KEY=...
 GEMINI_API_KEY=...
 ```
 
-Use an optional `INTENT_MODEL` to run the intent check on a different provider or model. Per-provider request budgets are configured with `LLM_RPM_GROQ`, `LLM_RPM_CEREBRAS`, `LLM_RPM_GEMINI`, and `LLM_RPM_OPENROUTER`; the agent waits instead of sending over-budget requests.
+Use an optional `INTENT_MODEL` to run the intent check on a different provider or model. Per-provider request budgets are configured with `LLM_RPM_GROQ`, `LLM_RPM_CEREBRAS`, `LLM_RPM_GEMINI`, `LLM_RPM_OPENROUTER`, and `LLM_RPM_GITHUB` (default 10); the agent waits instead of sending over-budget requests.
 
 Run the free-tier model check to verify each chain entry against the mock catalog. It uses a PayPal `create_order` spy, so it never calls PayPal:
 
 ```bash
 npm run model-check
+npm run model-check -- --runs 2
 ```
+
+The check defaults to 2 runs per entry and waits briefly between runs to avoid burning free daily quotas.
 
 After the deterministic rules return `ALLOW`, a second intent check compares the user's original request with the proposed cart. Product names and other cart text are passed to the model as untrusted, delimited data. A partial or mismatched intent, malformed JSON, a model error, or a timeout all require approval. A deterministic `BLOCK` is never loosened. Configure the timeout with `INTENT_TIMEOUT_MS` (default 5000).
 

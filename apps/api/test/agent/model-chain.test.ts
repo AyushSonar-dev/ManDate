@@ -7,7 +7,9 @@ import {
 } from 'ai';
 import { describe, expect, it } from 'vitest';
 import {
+  describeProviderError,
   isFallbackEligibleProviderError,
+  LLM_PROVIDER_CONFIG,
   parseLlmChain,
   parseLlmEntry,
   TokenBucket,
@@ -134,6 +136,17 @@ describe('LLM chain parsing and error handling', () => {
     });
   });
 
+  it('parses GitHub Models entries with a slash in the model id', () => {
+    expect(parseLlmEntry('github:openai/gpt-4.1')).toEqual({
+      provider: 'github',
+      model: 'openai/gpt-4.1',
+    });
+    expect(LLM_PROVIDER_CONFIG.github).toEqual({
+      keyEnv: 'GITHUB_MODELS_TOKEN',
+      baseURL: 'https://models.github.ai/inference',
+    });
+  });
+
   it('rejects malformed entries and unknown providers', () => {
     expect(() => parseLlmEntry('gemini')).toThrowError(/provider:model/);
     expect(() => parseLlmEntry('unknown:model')).toThrowError(
@@ -156,6 +169,22 @@ describe('LLM chain parsing and error handling', () => {
     });
 
     expect(isFallbackEligibleProviderError(retryError)).toBe(true);
+  });
+
+  it('explains GitHub Models 401 and 403 responses without leaking the token', () => {
+    for (const status of [401, 403]) {
+      const message = describeProviderError(apiError(status), 'github');
+
+      expect(message).toContain(`HTTP ${status}`);
+      expect(message).toContain('Models read-only permission');
+    }
+
+    expect(describeProviderError(apiError(400), 'github')).toBe(
+      'provider responded with 400',
+    );
+    expect(describeProviderError(apiError(401), 'groq')).toBe(
+      'provider responded with 401',
+    );
   });
 });
 

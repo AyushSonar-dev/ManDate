@@ -13,6 +13,7 @@ export const LLM_PROVIDERS = [
   'cerebras',
   'gemini',
   'openrouter',
+  'github',
 ] as const;
 
 export type LlmProvider = (typeof LLM_PROVIDERS)[number];
@@ -37,6 +38,10 @@ export const LLM_PROVIDER_CONFIG: Record<LlmProvider, LlmProviderConfig> = {
   openrouter: {
     keyEnv: 'OPENROUTER_API_KEY',
     baseURL: 'https://openrouter.ai/api/v1',
+  },
+  github: {
+    keyEnv: 'GITHUB_MODELS_TOKEN',
+    baseURL: 'https://models.github.ai/inference',
   },
 } as const satisfies Record<LlmProvider, LlmProviderConfig>;
 
@@ -210,6 +215,75 @@ function isFallbackStatus(statusCode: number | undefined): boolean {
   return statusCode === 429 || (statusCode !== undefined && statusCode >= 500);
 }
 
+export function providerErrorStatus(error: unknown): number | undefined {
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+
+  for (let depth = 0; depth < 6; depth += 1) {
+    if (current === undefined || current === null || seen.has(current)) {
+      return undefined;
+    }
+    seen.add(current);
+
+    if (APICallError.isInstance(current)) {
+      return current.statusCode;
+    }
+
+    if (RetryError.isInstance(current)) {
+      current = current.lastError ?? current.errors.at(-1);
+      continue;
+    }
+
+    if (typeof current !== 'object') {
+      return undefined;
+    }
+
+    const candidate = current as {
+      statusCode?: unknown;
+      lastError?: unknown;
+      errors?: unknown;
+      cause?: unknown;
+    };
+
+    if (typeof candidate.statusCode === 'number') {
+      return candidate.statusCode;
+    }
+
+    if (candidate.lastError !== undefined) {
+      current = candidate.lastError;
+      continue;
+    }
+
+    if (Array.isArray(candidate.errors)) {
+      current = candidate.errors.at(-1);
+      continue;
+    }
+
+    if (candidate.cause !== undefined) {
+      current = candidate.cause;
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return undefined;
+}
+
+export function describeProviderError(
+  error: unknown,
+  provider: LlmProvider,
+): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const status = providerErrorStatus(error);
+
+  if (provider === 'github' && (status === 401 || status === 403)) {
+    return `${message} (HTTP ${status}: check that GITHUB_MODELS_TOKEN has the Models read-only permission)`;
+  }
+
+  return message;
+}
+
 export function isFallbackEligibleProviderError(error: unknown): boolean {
   let current: unknown = error;
   const seen = new Set<unknown>();
@@ -288,19 +362,33 @@ export function createLanguageModel(input: {
           })(input.entry.model);
         })();
 
-  if (!input.rateLimiter) {
+  if (!input.rateLimiter && input.entry.provider !== 'github') {
     return baseModel;
   }
 
   const rateLimiter = input.rateLimiter;
+  const provider = input.entry.provider;
 
   return wrapLanguageModel({
     model: baseModel,
     middleware: {
       middlewareVersion: 'v2',
       wrapGenerate: async ({ doGenerate }) => {
-        await rateLimiter.acquire(input.entry.provider);
-        return doGenerate();
+        await rateLimiter?.acquire(provider);
+
+        try {
+          return await doGenerate();
+        } catch (error) {
+          const message = describeProviderError(error, provider);
+          const original =
+            error instanceof Error ? error.message : String(error);
+
+          if (message !== original) {
+            throw new Error(message, { cause: error });
+          }
+
+          throw error;
+        }
       },
     },
   });
@@ -340,6 +428,10 @@ function rateLimitConfig(environment: AgentEnv): Partial<
 
   if (environment.LLM_RPM_OPENROUTER !== undefined) {
     config.openrouter = environment.LLM_RPM_OPENROUTER;
+  }
+
+  if (environment.LLM_RPM_GITHUB !== undefined) {
+    config.github = environment.LLM_RPM_GITHUB;
   }
 
   return config;

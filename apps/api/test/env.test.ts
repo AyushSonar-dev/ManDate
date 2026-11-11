@@ -71,6 +71,7 @@ describe('parseAgentEnv', () => {
       CHANNEL3_OFFLINE: false,
       AGENT_MAX_STEPS: 5,
       INTENT_TIMEOUT_MS: 5_000,
+      LLM_RPM_GITHUB: 10,
     });
   });
 
@@ -115,6 +116,38 @@ describe('parseAgentEnv', () => {
         LLM_CHAIN: 'unknown:model',
       }),
     ).toThrowError(/Unknown LLM provider/);
+  });
+
+  it('requires GITHUB_MODELS_TOKEN for the github provider', () => {
+    expect(() =>
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        LLM_CHAIN: 'github:openai/gpt-4.1',
+      }),
+    ).toThrowError(/GITHUB_MODELS_TOKEN/);
+
+    expect(
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        LLM_CHAIN: 'github:openai/gpt-4.1',
+        GITHUB_MODELS_TOKEN: 'github-token',
+      }),
+    ).toMatchObject({
+      LLM_CHAIN: 'github:openai/gpt-4.1',
+      GITHUB_MODELS_TOKEN: 'github-token',
+      LLM_RPM_GITHUB: 10,
+    });
+  });
+
+  it('accepts an explicit GitHub Models rate limit', () => {
+    expect(
+      parseAgentEnv({
+        ...validAgentEnvironment,
+        LLM_CHAIN: 'github:openai/gpt-4.1',
+        GITHUB_MODELS_TOKEN: 'github-token',
+        LLM_RPM_GITHUB: '4',
+      }),
+    ).toMatchObject({ LLM_RPM_GITHUB: 4 });
   });
 
   it('accepts the legacy Google key for Gemini', () => {

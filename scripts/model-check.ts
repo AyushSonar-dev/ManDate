@@ -13,6 +13,7 @@ import type {
 import type { ToolkitTool } from '../apps/api/src/guard/tool-wrapper.js';
 import {
   createLanguageModel,
+  describeProviderError,
   parseLlmChain,
   ProviderRateLimiter,
   readProviderApiKey,
@@ -21,7 +22,8 @@ import {
 import { runShoppingAgent } from '../apps/api/src/agent/run-agent.js';
 import { MockStorefrontProvider } from '../apps/api/src/storefront/mock-provider.js';
 
-const RUNS_PER_ENTRY = 5;
+const DEFAULT_RUNS = 2;
+const RUN_DELAY_MS = 2_000;
 const MANDATE_ID = 'model-check';
 const PROMPT =
   'Buy the Aurora Wireless Headphones if they cost at most 40 dollars.';
@@ -87,12 +89,51 @@ function positiveInteger(value: string | undefined): number | undefined {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+function parseRuns(argv: readonly string[]): number {
+  let runs: number | undefined;
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+
+    if (argument === '--runs') {
+      const value = argv[index + 1];
+      const parsed = positiveInteger(value);
+
+      if (parsed === undefined) {
+        throw new Error('--runs requires a positive integer');
+      }
+
+      runs = parsed;
+      index += 1;
+      continue;
+    }
+
+    if (argument?.startsWith('--runs=')) {
+      const parsed = positiveInteger(argument.slice('--runs='.length));
+
+      if (parsed === undefined) {
+        throw new Error('--runs requires a positive integer');
+      }
+
+      runs = parsed;
+      continue;
+    }
+
+    if (argument?.startsWith('--')) {
+      throw new Error(`Unknown option ${argument}`);
+    }
+  }
+
+  return runs ?? DEFAULT_RUNS;
+}
+
 function rateLimits(): Partial<Record<LlmProvider, number>> {
   const limits: Partial<Record<LlmProvider, number>> = {};
   const groq = positiveInteger(process.env.LLM_RPM_GROQ);
   const cerebras = positiveInteger(process.env.LLM_RPM_CEREBRAS);
   const gemini = positiveInteger(process.env.LLM_RPM_GEMINI);
   const openrouter = positiveInteger(process.env.LLM_RPM_OPENROUTER);
+  const github = positiveInteger(process.env.LLM_RPM_GITHUB) ?? 10;
 
   if (groq !== undefined) {
     limits.groq = groq;
@@ -109,6 +150,8 @@ function rateLimits(): Partial<Record<LlmProvider, number>> {
   if (openrouter !== undefined) {
     limits.openrouter = openrouter;
   }
+
+  limits.github = github;
 
   return limits;
 }
@@ -152,6 +195,7 @@ async function runEntry(input: {
   label: string;
   provider: LlmProvider;
   model: ReturnType<typeof createLanguageModel>;
+  runs: number;
 }): Promise<void> {
   let requestsThisRun = 0;
   let createOrderArgs: Record<string, unknown> | undefined;
@@ -197,7 +241,7 @@ async function runEntry(input: {
   let totalRequests = 0;
   const failures: string[] = [];
 
-  for (let run = 1; run <= RUNS_PER_ENTRY; run += 1) {
+  for (let run = 1; run <= input.runs; run += 1) {
     requestsThisRun = 0;
     createOrderArgs = undefined;
     createOrderCalls = 0;
@@ -238,34 +282,41 @@ async function runEntry(input: {
       }
     } catch (error) {
       failures.push(
-        `run ${run}: ${error instanceof Error ? error.message : String(error)}`,
+        `run ${run}: ${describeProviderError(error, input.provider)}`,
       );
     } finally {
       totalRequests += requestsThisRun;
     }
+
+    if (run < input.runs) {
+      await new Promise((resolve) => setTimeout(resolve, RUN_DELAY_MS));
+    }
   }
 
   console.log(`\n${input.label}`);
-  console.log(`  runs completed: ${completed}/${RUNS_PER_ENTRY}`);
-  console.log(`  correct tool call shape: ${correctShape}/${RUNS_PER_ENTRY}`);
+  console.log(`  runs completed: ${completed}/${input.runs}`);
+  console.log(`  correct tool call shape: ${correctShape}/${input.runs}`);
   console.log(`  requests used: ${totalRequests}`);
 
   for (const failure of failures) {
     console.log(`  ${failure}`);
   }
 
-  if (completed < RUNS_PER_ENTRY || correctShape < RUNS_PER_ENTRY) {
+  if (completed < input.runs || correctShape < input.runs) {
     process.exitCode = 1;
   }
 }
 
 async function main(): Promise<void> {
+  const runs = parseRuns(process.argv.slice(2));
   const chain = parseLlmChain(
     process.env.LLM_CHAIN ?? 'gemini:gemini-2.5-flash',
   );
   const rateLimiter = new ProviderRateLimiter(rateLimits());
 
-  console.log('Model chain check (mock storefront, PayPal create_order spy)');
+  console.log(
+    `Model chain check (mock storefront, PayPal create_order spy, ${runs} run${runs === 1 ? '' : 's'} per entry)`,
+  );
 
   for (const entry of chain) {
     const apiKey = readProviderApiKey(process.env, entry.provider);
@@ -286,6 +337,7 @@ async function main(): Promise<void> {
       label: `${entry.provider}:${entry.model}`,
       provider: entry.provider,
       model,
+      runs,
     });
   }
 }
