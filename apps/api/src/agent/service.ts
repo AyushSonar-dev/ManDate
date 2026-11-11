@@ -1,4 +1,3 @@
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
 import type { PrismaClient } from '@prisma/client';
 import type { AgentEnv } from '../config/env.js';
@@ -6,6 +5,7 @@ import { loadAgentEnv } from '../config/env.js';
 import { createIntentChecker } from '../guard/intent.js';
 import { PrismaGuardStore } from '../guard/store.js';
 import type { ToolkitTool } from '../guard/tool-wrapper.js';
+import { createAgentLlmRuntime } from './llm.js';
 import { createStorefrontProvider } from './provider.js';
 import {
   runShoppingAgent,
@@ -15,6 +15,7 @@ import {
 export interface AgentRunInput {
   mandateId: string;
   prompt: string;
+  runId?: string;
   onStep?: (step: AgentStepLog) => void;
 }
 
@@ -47,12 +48,9 @@ export function createAgentRunner(input: {
       },
     },
   });
-  const google = createGoogleGenerativeAI({
-    apiKey: input.env.GOOGLE_GENERATIVE_AI_API_KEY,
-  });
-  const model = google(input.env.GOOGLE_MODEL);
+  const llm = createAgentLlmRuntime(input.env);
   const intentChecker = createIntentChecker({
-    model,
+    model: llm.intentModel,
     timeoutMs: input.env.INTENT_TIMEOUT_MS,
   });
 
@@ -61,9 +59,9 @@ export function createAgentRunner(input: {
       return runShoppingAgent({
         mandateId: runInput.mandateId,
         prompt: runInput.prompt,
-        model,
+        models: llm.entries,
         provider,
-        store: new PrismaGuardStore(input.prisma),
+        store: new PrismaGuardStore(input.prisma, runInput.runId),
         toolkitTools: toolkit.getTools() as unknown as Record<
           string,
           ToolkitTool

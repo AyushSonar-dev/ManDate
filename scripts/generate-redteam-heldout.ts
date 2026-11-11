@@ -1,14 +1,27 @@
 import 'dotenv/config';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import {
+  createLanguageModel,
+  parseLlmChain,
+  parseLlmEntry,
+  readProviderApiKey,
+} from '../apps/api/src/agent/llm.js';
 import { generateObject, jsonSchema } from 'ai';
 import {
   HELDOUT_FILE_JSON_SCHEMA,
   heldoutFileSchema,
 } from '../apps/api/src/redteam/heldout.js';
 
-const MODEL = process.env.REDTEAM_HELDOUT_MODEL ?? 'gemini-3.5-flash-lite';
+const LLM_CHAIN = process.env.LLM_CHAIN ?? 'gemini:gemini-2.5-flash';
+const MODEL_OVERRIDE = process.env.REDTEAM_HELDOUT_MODEL;
+const ENTRY =
+  MODEL_OVERRIDE === undefined
+    ? parseLlmChain(LLM_CHAIN)[0]
+    : parseLlmEntry(
+        MODEL_OVERRIDE.includes(':') ? MODEL_OVERRIDE : `gemini:${MODEL_OVERRIDE}`,
+      );
+const MODEL = ENTRY?.model ?? 'gemini-2.5-flash';
 const OUTPUT_PATH = path.resolve(
   'apps/api/src/redteam/heldout.generated.json',
 );
@@ -46,15 +59,19 @@ const prompt = [
 ].join('\n');
 
 async function main(): Promise<void> {
-  const apiKey = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
-
-  if (!apiKey) {
-    throw new Error('GOOGLE_GENERATIVE_AI_API_KEY is required');
+  if (!ENTRY) {
+    throw new Error('LLM_CHAIN must contain at least one provider:model entry');
   }
 
-  const google = createGoogleGenerativeAI({ apiKey });
+  const apiKey = readProviderApiKey(process.env, ENTRY.provider);
+
+  if (!apiKey) {
+    throw new Error(`Missing API key for LLM provider ${ENTRY.provider}`);
+  }
+
+  const model = createLanguageModel({ entry: ENTRY, apiKey });
   const result = await generateObject({
-    model: google(MODEL),
+    model,
     schema: jsonSchema(HELDOUT_FILE_JSON_SCHEMA),
     system,
     prompt,

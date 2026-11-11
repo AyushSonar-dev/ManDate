@@ -29,11 +29,20 @@ async function createMandate(marker: string) {
 }
 
 async function cleanup(marker: string): Promise<void> {
+  const mandates = await prisma.mandate.findMany({
+    where: { allowedMerchants: { has: marker } },
+    select: { id: true },
+  });
+  const mandateIds = mandates.map((mandate) => mandate.id);
+
   await prisma.attackRun.deleteMany({
     where: { name: { startsWith: `ui-api:${marker}:` } },
   });
+  await prisma.agentRun.deleteMany({
+    where: { mandateId: { in: mandateIds } },
+  });
   await prisma.mandate.deleteMany({
-    where: { allowedMerchants: { has: marker } },
+    where: { id: { in: mandateIds } },
   });
 }
 
@@ -178,30 +187,139 @@ describe('GET /scorecard/latest', () => {
   });
 });
 
+async function waitForRunStatus(
+  app: ReturnType<typeof createApp>,
+  runId: string,
+  expected: 'COMPLETED' | 'FAILED',
+) {
+  let lastStatus = '';
+
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const response = await request(app).get(`/agent/runs/${runId}`);
+
+    if (response.status === 200) {
+      lastStatus = response.body.status;
+
+      if (lastStatus === expected) {
+        return response;
+      }
+
+      if (lastStatus === 'COMPLETED' || lastStatus === 'FAILED') {
+        return response;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  throw new Error(`Agent run did not finish; last status was ${lastStatus}`);
+}
+
 describe('POST /agent/runs', () => {
-  it('runs the injected agent runner and returns its result', async () => {
-    const calls: Array<{ mandateId: string; prompt: string }> = [];
+  it('returns 202 immediately and completes the run in the background', async () => {
+    const marker = newMarker();
+    const mandate = await createMandate(marker);
+    const calls: Array<{
+      mandateId: string;
+      prompt: string;
+      runId: string;
+    }> = [];
     const runner: AgentRunner = {
       async run(input) {
-        calls.push({ mandateId: input.mandateId, prompt: input.prompt });
+        if (input.runId === undefined) {
+          throw new Error('Expected the run id to be provided');
+        }
+
+        calls.push({
+          mandateId: input.mandateId,
+          prompt: input.prompt,
+          runId: input.runId,
+        });
+        await prisma.decision.create({
+          data: {
+            mandateId: input.mandateId,
+            runId: input.runId,
+            verdict: DecisionVerdict.ALLOW,
+            reason: DecisionVerdict.ALLOW,
+            toolName: 'create_order',
+          },
+        });
         return { text: 'Agent finished', steps: [] };
       },
     };
     const app = createApp({ agentRunner: runner });
-    const mandateId = randomUUID();
 
     const response = await request(app).post('/agent/runs').send({
-      mandateId,
+      mandateId: mandate.id,
       prompt: 'Buy one book',
     });
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({ text: 'Agent finished', steps: [] });
-    expect(calls).toEqual([{ mandateId, prompt: 'Buy one book' }]);
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      status: 'RUNNING',
+      run_id: response.body.runId,
+    });
+    expect(typeof response.body.runId).toBe('string');
+
+    const finished = await waitForRunStatus(app, response.body.runId, 'COMPLETED');
+
+    expect(finished.body).toMatchObject({
+      id: response.body.runId,
+      status: 'COMPLETED',
+      result: 'Agent finished',
+      error: null,
+    });
+    expect(finished.body.decisions).toHaveLength(1);
+    expect(finished.body.decisions[0]).toMatchObject({
+      runId: response.body.runId,
+      verdict: 'ALLOW',
+    });
+    expect(calls).toEqual([
+      {
+        mandateId: mandate.id,
+        prompt: 'Buy one book',
+        runId: response.body.runId,
+      },
+    ]);
+  });
+
+  it('marks a failed run with a readable reason', async () => {
+    const marker = newMarker();
+    const mandate = await createMandate(marker);
+    const runner: AgentRunner = {
+      async run() {
+        throw new Error('model provider unavailable');
+      },
+    };
+    const app = createApp({ agentRunner: runner });
+
+    const response = await request(app).post('/agent/runs').send({
+      mandateId: mandate.id,
+      prompt: 'Buy one book',
+    });
+
+    expect(response.status).toBe(202);
+
+    const finished = await waitForRunStatus(app, response.body.runId, 'FAILED');
+
+    expect(finished.body).toMatchObject({
+      id: response.body.runId,
+      status: 'FAILED',
+      result: null,
+      error: 'model provider unavailable',
+      decisions: [],
+    });
   });
 
   it('validates the request and reports an unconfigured runner', async () => {
-    const invalid = await request(createApp({ agentRunner: { run: async () => ({ text: '', steps: [] }) } }))
+    const runner: AgentRunner = {
+      async run() {
+        return { text: '', steps: [] };
+      },
+    };
+    const configured = createApp({ agentRunner: runner });
+
+    const invalid = await request(configured)
       .post('/agent/runs')
       .send({ mandateId: 'not-a-uuid', prompt: '' });
 
@@ -214,5 +332,21 @@ describe('POST /agent/runs', () => {
 
     expect(unavailable.status).toBe(503);
     expect(unavailable.body).toEqual({ error: 'Agent runner is not configured' });
+  });
+});
+
+describe('GET /agent/runs/:id', () => {
+  it('rejects an invalid id and returns 404 for an unknown run', async () => {
+    const invalid = await request(createApp()).get('/agent/runs/not-a-uuid');
+
+    expect(invalid.status).toBe(400);
+    expect(invalid.body).toEqual({ error: 'Invalid agent run id' });
+
+    const unknown = await request(createApp()).get(
+      '/agent/runs/00000000-0000-0000-0000-000000000000',
+    );
+
+    expect(unknown.status).toBe(404);
+    expect(unknown.body).toEqual({ error: 'Agent run not found' });
   });
 });

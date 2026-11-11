@@ -1,7 +1,11 @@
 import path from 'node:path';
 import dotenv from 'dotenv';
-import { generateText } from 'ai';
-import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { generateText, stepCountIs, tool } from 'ai';
+import {
+  createLanguageModel,
+  parseLlmChain,
+  readProviderApiKey,
+} from '../apps/api/src/agent/llm.js';
 import { PayPalAgentToolkit } from '@paypal/agent-toolkit/ai-sdk';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env') });
@@ -19,6 +23,13 @@ type ToolExchange = {
   toolCallId: string;
   args: unknown;
   result: unknown;
+};
+
+type GeneratedResult = {
+  steps: Array<{
+    toolCalls: Array<{ toolName: string; toolCallId: string; input: unknown }>;
+    toolResults: Array<{ toolName: string; toolCallId: string; output: unknown }>;
+  }>;
 };
 
 function requireEnv(name: string): string {
@@ -129,19 +140,19 @@ function summarizeOrder(value: unknown): void {
   console.log('Approval link:', approvalLink?.href ?? '(none)');
 }
 
-function collectToolExchanges(result: Awaited<ReturnType<typeof generateText>>): ToolExchange[] {
+function collectToolExchanges(result: GeneratedResult): ToolExchange[] {
   const toolResults = result.steps.flatMap((step) => step.toolResults);
   return result.steps.flatMap((step) =>
     step.toolCalls.map((call) => ({
       toolName: call.toolName,
       toolCallId: call.toolCallId,
-      args: call.args,
-      result: toolResults.find((toolResult) => toolResult.toolCallId === call.toolCallId)?.result,
+      args: call.input,
+      result: toolResults.find((toolResult) => toolResult.toolCallId === call.toolCallId)?.output,
     })),
   );
 }
 
-function printToolExchanges(result: Awaited<ReturnType<typeof generateText>>): ToolExchange[] {
+function printToolExchanges(result: GeneratedResult): ToolExchange[] {
   const exchanges = collectToolExchanges(result);
   if (exchanges.length === 0) {
     throw new Error('The model did not make a tool call');
@@ -166,7 +177,6 @@ async function main(): Promise<void> {
   assertSandbox();
   const clientId = requireEnv('PAYPAL_CLIENT_ID');
   const clientSecret = requireEnv('PAYPAL_CLIENT_SECRET');
-  const googleApiKey = requireEnv('GOOGLE_GENERATIVE_AI_API_KEY');
 
   const toolkit = new PayPalAgentToolkit({
     clientId,
@@ -185,8 +195,8 @@ async function main(): Promise<void> {
     },
   });
 
-  const tools = toolkit.getTools() as Record<string, ToolLike>;
-  console.log('Available PayPal tool names:', Object.keys(tools).sort().join(', '));
+  const rawTools = toolkit.getTools() as Record<string, ToolLike>;
+  console.log('Available PayPal tool names:', Object.keys(rawTools).sort().join(', '));
 
   let originalExecuteCalls = 0;
   let getHeadersCalls = 0;
@@ -200,13 +210,13 @@ async function main(): Promise<void> {
     return originalGetHeaders();
   };
 
-  for (const [toolName, tool] of Object.entries(tools)) {
-    const originalExecute = tool.execute;
+  for (const [toolName, rawTool] of Object.entries(rawTools)) {
+    const originalExecute = rawTool.execute;
     if (!originalExecute) {
       continue;
     }
 
-    tool.execute = async (args, options) => {
+    rawTool.execute = async (args, options) => {
       console.log(`[tool-wrapper] ${toolName} arguments: ${JSON.stringify(args)}`);
 
       if (toolName === 'create_order') {
@@ -232,15 +242,39 @@ async function main(): Promise<void> {
     };
   }
 
-  const google = createGoogleGenerativeAI({ apiKey: googleApiKey });
-  const model = google(process.env.GOOGLE_MODEL ?? 'gemini-2.5-flash');
+  const tools = Object.fromEntries(
+    Object.entries(rawTools).map(([toolName, rawTool]) => [
+      toolName,
+      tool({
+        description: rawTool.description ?? toolName,
+        inputSchema: rawTool.parameters as never,
+        execute: rawTool.execute as never,
+      }),
+    ]),
+  );
+
+  const [entry] = parseLlmChain(
+    process.env.LLM_CHAIN ?? 'gemini:gemini-2.5-flash',
+  );
+
+  if (!entry) {
+    throw new Error('LLM_CHAIN must contain at least one provider:model entry');
+  }
+
+  const apiKey = readProviderApiKey(process.env, entry.provider);
+
+  if (!apiKey) {
+    throw new Error(`Missing API key for LLM provider ${entry.provider}`);
+  }
+
+  const model = createLanguageModel({ entry, apiKey });
 
   console.log('\n=== Scenario 1: create a 20 USD order ===');
   const twentyDollarOrder = await generateText({
     model,
     tools,
     toolChoice: { type: 'tool', toolName: 'create_order' },
-    maxSteps: 1,
+    stopWhen: stepCountIs(1),
     temperature: 0,
     prompt:
       'Create a PayPal order for exactly 20.00 USD using the create_order tool. ' +
@@ -259,7 +293,7 @@ async function main(): Promise<void> {
     model,
     tools,
     toolChoice: { type: 'tool', toolName: 'create_order' },
-    maxSteps: 1,
+    stopWhen: stepCountIs(1),
     temperature: 0,
     prompt:
       'Create a PayPal order for exactly 200.00 USD using the create_order tool. ' +

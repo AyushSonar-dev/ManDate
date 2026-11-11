@@ -1,6 +1,9 @@
 import {
   generateText,
+  stepCountIs,
+  tool,
   type LanguageModel,
+  type ModelMessage,
   type ToolSet,
 } from 'ai';
 import type {
@@ -13,9 +16,11 @@ import {
 } from '../guard/tool-wrapper.js';
 import type { StorefrontProvider } from '../storefront/types.js';
 import { createStorefrontTools } from '../storefront/tools.js';
+import { isFallbackEligibleProviderError, type AgentModelEntry } from './llm.js';
 import { createStorefrontOrderContextResolver } from './order-context.js';
 
-const DEFAULT_MAX_STEPS = 8;
+const DEFAULT_MAX_STEPS = 5;
+const MAX_AGENT_STEPS = 5;
 const EXPOSED_PAYPAL_TOOLS = new Set(['create_order', 'get_order']);
 
 interface GenerationToolCall {
@@ -43,13 +48,46 @@ export interface ShoppingAgentGeneration {
 }
 
 export interface ShoppingAgentRequest {
-  model: LanguageModel;
+  model?: LanguageModel;
   tools: ToolSet;
   system: string;
   prompt: string;
   maxSteps: number;
   temperature: number;
 }
+
+interface RawChainStep {
+  text?: string;
+  finishReason?: string;
+  toolCalls: Array<{
+    toolName: string;
+    toolCallId: string;
+    input: unknown;
+  }>;
+  toolResults: Array<{
+    toolName: string;
+    toolCallId: string;
+    output: unknown;
+  }>;
+}
+
+interface ModelChainTextResult {
+  text: string;
+  steps: RawChainStep[];
+  response: {
+    messages: ModelMessage[];
+  };
+}
+
+export type ModelChainTextGenerator = (options: {
+  model: LanguageModel;
+  tools: ToolSet;
+  system: string;
+  messages: ModelMessage[];
+  temperature: number;
+  maxRetries: number;
+  stopWhen: ReturnType<typeof stepCountIs>;
+}) => Promise<ModelChainTextResult>;
 
 export interface AgentToolCallLog {
   toolName: string;
@@ -79,7 +117,8 @@ export interface ShoppingAgentResult {
 export interface ShoppingAgentOptions {
   mandateId: string;
   prompt: string;
-  model: LanguageModel;
+  model?: LanguageModel;
+  models?: readonly AgentModelEntry[];
   provider: StorefrontProvider;
   store: GuardStore;
   toolkitTools: Record<string, ToolkitTool>;
@@ -110,7 +149,7 @@ function buildSystemPrompt(input: {
 }): string {
   return [
     'You are a shopping agent that buys products for a user under a spending mandate.',
-    'Use search_catalog to find products and get_item to inspect the full product page.',
+    'Use search_catalog to find products. Each call returns up to 3 full product pages with descriptions and reviews.',
     'Use the exact product title returned by the catalog as the item name when calling create_order.',
     'When calling create_order, provide quantity, itemCost, taxPercent, and itemTotal in major currency units.',
     'Do not invent products, prices, merchants, or categories.',
@@ -126,12 +165,191 @@ function buildSystemPrompt(input: {
   ].join('\n');
 }
 
-function defaultGenerate(
+function toSdkToolkitTools(tools: Record<string, ToolkitTool>): ToolSet {
+  return Object.fromEntries(
+    Object.entries(tools).map(([toolName, toolkitTool]) => [
+      toolName,
+      tool({
+        description: toolkitTool.description ?? toolName,
+        inputSchema: toolkitTool.parameters as never,
+        execute: toolkitTool.execute as never,
+      }),
+    ]),
+  ) as ToolSet;
+}
+
+async function defaultGenerate(
   request: ShoppingAgentRequest,
 ): Promise<ShoppingAgentGeneration> {
-  return generateText(
-    request as unknown as Parameters<typeof generateText>[0],
-  ) as unknown as Promise<ShoppingAgentGeneration>;
+  if (!request.model) {
+    throw new Error('A language model is required when no model chain is configured');
+  }
+
+  const result = await generateText({
+    model: request.model,
+    tools: request.tools,
+    system: request.system,
+    prompt: request.prompt,
+    temperature: request.temperature,
+    stopWhen: stepCountIs(request.maxSteps),
+  });
+
+  return {
+    text: result.text,
+    steps: result.steps.map((step) => ({
+      text: step.text,
+      finishReason: step.finishReason,
+      toolCalls: step.toolCalls.map((call) => ({
+        toolName: call.toolName,
+        toolCallId: call.toolCallId,
+        args: call.input,
+      })),
+      toolResults: step.toolResults.map((toolResult) => ({
+        toolName: toolResult.toolName,
+        toolCallId: toolResult.toolCallId,
+        result: toolResult.output,
+      })),
+    })),
+  };
+}
+
+const defaultChainTextGenerator: ModelChainTextGenerator = async (options) => {
+  const result = await generateText(options);
+  return result;
+};
+
+function trackToolExecutions(tools: ToolSet): {
+  tools: ToolSet;
+  hasExecuted: () => boolean;
+} {
+  let executed = false;
+
+  const tracked = Object.fromEntries(
+    Object.entries(tools).map(([toolName, current]) => {
+      const execute = (current as { execute?: (...args: unknown[]) => unknown })
+        .execute;
+
+      if (typeof execute !== 'function') {
+        return [toolName, current];
+      }
+
+      return [
+        toolName,
+        {
+          ...current,
+          execute: async (...args: unknown[]) => {
+            executed = true;
+            return execute(...args);
+          },
+        },
+      ];
+    }),
+  ) as ToolSet;
+
+  return { tools: tracked, hasExecuted: () => executed };
+}
+
+function mapChainStep(step: RawChainStep): GenerationStep {
+  return {
+    ...(step.text === undefined ? {} : { text: step.text }),
+    ...(step.finishReason === undefined
+      ? {}
+      : { finishReason: step.finishReason }),
+    toolCalls: step.toolCalls.map((call) => ({
+      toolName: call.toolName,
+      toolCallId: call.toolCallId,
+      args: call.input,
+    })),
+    toolResults: step.toolResults.map((toolResult) => ({
+      toolName: toolResult.toolName,
+      toolCallId: toolResult.toolCallId,
+      result: toolResult.output,
+    })),
+  };
+}
+
+async function generateWithEntry(
+  entry: AgentModelEntry,
+  request: ShoppingAgentRequest,
+  textGenerator: ModelChainTextGenerator,
+): Promise<ShoppingAgentGeneration> {
+  const messages: ModelMessage[] = [{ role: 'user', content: request.prompt }];
+  const steps: GenerationStep[] = [];
+  let text = '';
+
+  for (let stepNumber = 0; stepNumber < request.maxSteps; stepNumber += 1) {
+    const result = await textGenerator({
+      model: entry.model,
+      tools: request.tools,
+      system: request.system,
+      messages,
+      temperature: request.temperature,
+      maxRetries: 1,
+      stopWhen: stepCountIs(1),
+    });
+
+    steps.push(...result.steps.map(mapChainStep));
+    messages.push(...result.response.messages);
+    text = result.text;
+
+    const lastStep = result.steps.at(-1);
+
+    if (
+      !lastStep ||
+      lastStep.finishReason !== 'tool-calls' ||
+      lastStep.toolCalls.length === 0
+    ) {
+      break;
+    }
+  }
+
+  return { text, steps };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+export async function generateWithModelChain(
+  request: ShoppingAgentRequest,
+  entries: readonly AgentModelEntry[],
+  textGenerator: ModelChainTextGenerator = defaultChainTextGenerator,
+): Promise<ShoppingAgentGeneration> {
+  if (entries.length === 0) {
+    throw new Error('At least one model is required');
+  }
+
+  const tracked = trackToolExecutions(request.tools);
+  const chainRequest: ShoppingAgentRequest = {
+    ...request,
+    tools: tracked.tools,
+  };
+  let lastError: unknown;
+
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]!;
+
+    try {
+      return await generateWithEntry(entry, chainRequest, textGenerator);
+    } catch (error) {
+      lastError = error;
+
+      if (tracked.hasExecuted()) {
+        throw new Error(
+          `Model ${entry.label} failed after a tool call; not retrying. ${errorMessage(error)}`,
+          { cause: error },
+        );
+      }
+
+      const hasNext = index < entries.length - 1;
+
+      if (!hasNext || !isFallbackEligibleProviderError(error)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError ?? new Error('The model chain produced no result');
 }
 
 function mapStep(step: GenerationStep, stepNumber: number): AgentStepLog {
@@ -180,18 +398,29 @@ export async function runShoppingAgent(
     intentChecker: options.intentChecker,
     userRequest: options.prompt,
   });
-  const tools = {
+  const tools: ToolSet = {
     ...createStorefrontTools(options.provider),
-    ...guardedToolkitTools,
-  } as unknown as ToolSet;
+    ...toSdkToolkitTools(guardedToolkitTools),
+  };
   const system = buildSystemPrompt(mandate);
-  const generate = options.generate ?? defaultGenerate;
+  const models = options.models;
+  const generate =
+    options.generate ??
+    (models && models.length > 0
+      ? (request: ShoppingAgentRequest) =>
+          generateWithModelChain(request, models)
+      : defaultGenerate);
+  const requestedMaxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS;
+  const maxSteps = Math.min(
+    Math.max(1, requestedMaxSteps),
+    MAX_AGENT_STEPS,
+  );
   const generation = await generate({
-    model: options.model,
+    ...(options.model === undefined ? {} : { model: options.model }),
     tools,
     system,
     prompt: options.prompt,
-    maxSteps: options.maxSteps ?? DEFAULT_MAX_STEPS,
+    maxSteps,
     temperature: 0,
   });
   const steps = generation.steps.map((step, index) => mapStep(step, index + 1));

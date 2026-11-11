@@ -34,6 +34,12 @@ enum AttackRunStatus {
   FAILED
 }
 
+enum AgentRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model Mandate {
   id                          String   @id @default(uuid())
   totalBudgetMinorUnits       Int
@@ -51,25 +57,46 @@ model Mandate {
   orders     Order[]
   approvals  Approval[]
   attackRuns AttackRun[]
+  agentRuns  AgentRun[]
 
   @@map("mandates")
+}
+
+model AgentRun {
+  id          String         @id @default(uuid())
+  mandateId   String?
+  prompt      String
+  status      AgentRunStatus @default(RUNNING)
+  result      String?
+  error       String?
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+
+  mandate   Mandate?   @relation(fields: [mandateId], references: [id], onDelete: SetNull)
+  decisions Decision[]
+
+  @@index([mandateId, startedAt])
+  @@map("agent_runs")
 }
 
 model Decision {
   id             String          @id @default(uuid())
   mandateId      String
   orderId        String?
+  runId          String?
   verdict        DecisionVerdict
   reason         String
   toolName       String
   requestPayload Json?
   createdAt      DateTime        @default(now())
 
-  mandate Mandate @relation(fields: [mandateId], references: [id], onDelete: Cascade)
-  order   Order?  @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  mandate Mandate   @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  order   Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  run     AgentRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
 
   @@index([mandateId, createdAt])
   @@index([orderId])
+  @@index([runId])
   @@map("decisions")
 }
 

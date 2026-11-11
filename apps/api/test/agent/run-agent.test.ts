@@ -261,7 +261,7 @@ describe('runShoppingAgent', () => {
       },
     });
 
-    expect(request?.maxSteps).toBe(8);
+    expect(request?.maxSteps).toBe(5);
     expect(request?.system).toContain('Allowed merchants: soundhouse');
     expect(paypal.createOrder).toHaveBeenCalledTimes(1);
     expect(intent.check).toHaveBeenCalledWith(

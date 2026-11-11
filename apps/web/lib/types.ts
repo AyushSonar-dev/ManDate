@@ -106,6 +106,28 @@ export interface AgentRunResponse {
   steps: AgentStepLog[];
 }
 
+export type AgentRunStatus = 'RUNNING' | 'COMPLETED' | 'FAILED';
+
+export interface StartAgentRunResponse {
+  runId: string;
+  run_id: string;
+  status: AgentRunStatus;
+}
+
+export interface AgentRunDetail {
+  id: string;
+  runId: string;
+  run_id: string;
+  mandateId: string;
+  prompt: string;
+  status: AgentRunStatus;
+  result: string | null;
+  error: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  decisions: Decision[];
+}
+
 export interface ScorecardCategory {
   category: string;
   passed: number;

@@ -21,6 +21,7 @@
     "db:up": "docker compose up -d",
     "db:down": "docker compose down",
     "agent": "tsx apps/api/src/agent/cli.ts",
+    "model-check": "tsx scripts/model-check.ts",
     "toolkit:smoke": "tsx scripts/toolkit-smoke.ts",
     "redteam": "tsx apps/api/src/redteam/cli.ts",
     "redteam:generate-heldout": "tsx scripts/generate-redteam-heldout.ts"
@@ -29,10 +30,11 @@
     "node": ">=20.9"
   },
   "dependencies": {
-    "@ai-sdk/google": "^1.2.22",
+    "@ai-sdk/google": "^2.0.109",
+    "@ai-sdk/openai-compatible": "^1.0.63",
     "@paypal/agent-toolkit": "^1.11.0",
     "@prisma/client": "^6.19.3",
-    "ai": "^4.3.19",
+    "ai": "^5.0.286",
     "dotenv": "^16.4.7",
     "express": "^5.3.0",
     "prisma": "^6.19.3",

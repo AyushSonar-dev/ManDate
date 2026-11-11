@@ -17,9 +17,9 @@ import {
   reasonLabel,
 } from '@/lib/format';
 import type {
-  AgentRunResponse,
-  Decision,
+  AgentRunDetail,
   Mandate,
+  StartAgentRunResponse,
 } from '@/lib/types';
 
 const initialPrompt =
@@ -33,10 +33,9 @@ export default function RunPage() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
-  const [decisionsError, setDecisionsError] = useState<string | null>(null);
-  const [decisions, setDecisions] = useState<Decision[]>([]);
-  const [finalText, setFinalText] = useState<string | null>(null);
-  const [runStartedAt, setRunStartedAt] = useState<string | null>(null);
+  const [pollError, setPollError] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [run, setRun] = useState<AgentRunDetail | null>(null);
 
   const loadMandates = useCallback(async () => {
     setLoading(true);
@@ -56,41 +55,60 @@ export default function RunPage() {
     void loadMandates();
   }, [loadMandates]);
 
-  const refreshDecisions = useCallback(async () => {
-    if (!selectedMandateId) {
+  useEffect(() => {
+    if (!runId) {
       return;
     }
 
-    try {
-      const result = await apiGet<Decision[]>(
-        `/mandates/${selectedMandateId}/decisions?limit=50`,
-      );
-      setDecisions(result);
-      setDecisionsError(null);
-    } catch (error) {
-      setDecisionsError(errorMessage(error));
-    }
-  }, [selectedMandateId]);
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      try {
+        const detail = await apiGet<AgentRunDetail>(`/agent/runs/${runId}`);
+
+        if (cancelled) {
+          return;
+        }
+
+        setRun(detail);
+        setPollError(null);
+
+        if (detail.status === 'RUNNING') {
+          timer = window.setTimeout(() => {
+            void poll();
+          }, 1_500);
+        } else {
+          setRunning(false);
+        }
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setPollError(errorMessage(error));
+        timer = window.setTimeout(() => {
+          void poll();
+        }, 3_000);
+      }
+    };
+
+    void poll();
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        window.clearTimeout(timer);
+      }
+    };
+  }, [runId]);
 
   useEffect(() => {
-    if (!running || !selectedMandateId) {
-      return;
-    }
-
-    void refreshDecisions();
-    const interval = window.setInterval(() => {
-      void refreshDecisions();
-    }, 1_500);
-
-    return () => window.clearInterval(interval);
-  }, [running, selectedMandateId, refreshDecisions]);
-
-  useEffect(() => {
-    setDecisions([]);
-    setDecisionsError(null);
+    setRunId(null);
+    setRun(null);
     setRunError(null);
-    setFinalText(null);
-    setRunStartedAt(null);
+    setPollError(null);
+    setRunning(false);
   }, [selectedMandateId]);
 
   async function runAgent(event: FormEvent<HTMLFormElement>) {
@@ -102,28 +120,27 @@ export default function RunPage() {
 
     setRunning(true);
     setRunError(null);
-    setDecisionsError(null);
-    setFinalText(null);
-    setDecisions([]);
-    setRunStartedAt(new Date().toISOString());
+    setPollError(null);
+    setRun(null);
+    setRunId(null);
 
     try {
-      const result = await apiPost<AgentRunResponse>('/agent/runs', {
+      const started = await apiPost<StartAgentRunResponse>('/agent/runs', {
         mandateId: selectedMandateId,
         prompt,
       });
-      await refreshDecisions();
-      setFinalText(result.text);
+      setRunId(started.runId);
     } catch (error) {
       setRunError(errorMessage(error));
-      await refreshDecisions();
-    } finally {
       setRunning(false);
     }
   }
 
   const selectedMandate =
     mandates.find((mandate) => mandate.id === selectedMandateId) ?? null;
+  const decisions = run?.decisions ?? [];
+  const finalText = run?.result ?? null;
+  const runStatus = run?.status ?? (running ? 'RUNNING' : null);
 
   return (
     <div className="space-y-6">
@@ -134,8 +151,8 @@ export default function RunPage() {
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">Run the agent</h1>
         <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
           The agent searches the storefront, tries to create a PayPal order, and
-          the guard records a decision for each guarded tool call. The feed polls
-          the audit log while the run is in progress.
+          the guard records a decision for each guarded tool call. The run starts
+          immediately and this page polls it for status and decisions.
         </p>
       </div>
 
@@ -235,17 +252,42 @@ export default function RunPage() {
               {running ? 'Agent is running…' : 'Run agent'}
             </button>
 
-            {runStartedAt ? (
+            {run ? (
               <p className="text-xs text-slate-500">
-                Last run started {formatDateTime(runStartedAt)}
+                Run {run.id.slice(0, 8)}… started {formatDateTime(run.startedAt)}
+                {run.completedAt
+                  ? ` · finished ${formatDateTime(run.completedAt)}`
+                  : ''}
               </p>
             ) : null}
 
             {runError ? <ErrorState message={runError} /> : null}
-            {decisionsError ? <ErrorState message={decisionsError} /> : null}
+            {pollError ? <ErrorState message={pollError} /> : null}
           </form>
 
           <div className="space-y-4">
+            {run?.status === 'FAILED' ? (
+              <section className="rounded-2xl border border-rose-300 bg-rose-50 p-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-rose-800">
+                    Agent run failed
+                  </h2>
+                  <span className="rounded-full border border-rose-300 bg-white px-3 py-1 text-xs font-semibold text-rose-700">
+                    FAILED
+                  </span>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-rose-950">
+                  {run.error ?? 'The agent run failed without an error message.'}
+                </p>
+                <p className="mt-3 text-xs text-rose-800">
+                  Started {formatDateTime(run.startedAt)}
+                  {run.completedAt
+                    ? ` · Failed ${formatDateTime(run.completedAt)}`
+                    : ''}
+                </p>
+              </section>
+            ) : null}
+
             <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -253,23 +295,43 @@ export default function RunPage() {
                     Guarded tool calls
                   </h2>
                   <p className="text-xs text-slate-500">
-                    Live decisions from the audit log, newest first.
+                    Decisions recorded for this run, newest first.
                   </p>
                 </div>
-                {running ? (
+                {runStatus === 'RUNNING' ? (
                   <span className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700">
                     <span className="size-2 animate-pulse rounded-full bg-sky-500" />
                     Running
+                  </span>
+                ) : null}
+                {runStatus === 'COMPLETED' ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                    Completed
+                  </span>
+                ) : null}
+                {runStatus === 'FAILED' ? (
+                  <span className="rounded-full border border-rose-200 bg-rose-50 px-3 py-1 text-xs font-semibold text-rose-700">
+                    Failed
                   </span>
                 ) : null}
               </div>
 
               {decisions.length === 0 ? (
                 <div className="mt-4">
-                  <EmptyState title={running ? 'Waiting for a guarded call' : 'No decisions yet'}>
-                    {running
-                      ? 'The agent may be searching or inspecting the catalog. Decisions appear when it calls create_order.'
-                      : 'Run the agent to create a decision trail.'}
+                  <EmptyState
+                    title={
+                      runStatus === 'FAILED'
+                        ? 'No decisions recorded'
+                        : runStatus === 'RUNNING'
+                          ? 'Waiting for a guarded call'
+                          : 'No decisions yet'
+                    }
+                  >
+                    {runStatus === 'FAILED'
+                      ? 'The run failed before the agent made a guarded tool call.'
+                      : runStatus === 'RUNNING'
+                        ? 'The agent may be searching or inspecting the catalog. Decisions appear when it calls create_order.'
+                        : 'Run the agent to create a decision trail.'}
                   </EmptyState>
                 </div>
               ) : (
@@ -346,13 +408,15 @@ export default function RunPage() {
               )}
             </section>
 
-            {finalText ? (
+            {run?.status === 'COMPLETED' ? (
               <section className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
                 <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-emerald-800">
                   Agent response
                 </h2>
                 <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-emerald-950">
-                  {finalText}
+                  {finalText && finalText.length > 0
+                    ? finalText
+                    : 'The agent completed without a final response.'}
                 </p>
               </section>
             ) : null}

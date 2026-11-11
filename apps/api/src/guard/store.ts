@@ -59,10 +59,12 @@ type GuardPrismaClient = Pick<
 
 function decisionData(
   input: GuardDecisionInput,
+  runId?: string,
 ): Prisma.DecisionUncheckedCreateInput {
   return {
     mandateId: input.mandateId,
     ...(input.orderId === undefined ? {} : { orderId: input.orderId }),
+    ...(runId === undefined ? {} : { runId }),
     verdict: input.verdict,
     reason: input.reasons.length === 0 ? input.verdict : input.reasons.join(','),
     toolName: input.toolName,
@@ -115,7 +117,10 @@ export function parseStoredItems(value: Prisma.JsonValue): OrderLineItem[] {
 }
 
 export class PrismaGuardStore implements GuardStore {
-  constructor(private readonly prisma: GuardPrismaClient) {}
+  constructor(
+    private readonly prisma: GuardPrismaClient,
+    private readonly runId?: string,
+  ) {}
 
   async loadMandate(mandateId: string): Promise<MandateForGuard | null> {
     const mandate = await this.prisma.mandate.findUnique({
@@ -164,7 +169,9 @@ export class PrismaGuardStore implements GuardStore {
   }
 
   async saveDecision(input: GuardDecisionInput): Promise<{ id: string }> {
-    return this.prisma.decision.create({ data: decisionData(input) });
+    return this.prisma.decision.create({
+      data: decisionData(input, this.runId),
+    });
   }
 
   async saveAllowedOrder(input: {
@@ -176,7 +183,10 @@ export class PrismaGuardStore implements GuardStore {
         data: orderData(input.order),
       });
       const decision = await transaction.decision.create({
-        data: decisionData({ ...input.decision, orderId: order.id }),
+        data: decisionData(
+          { ...input.decision, orderId: order.id },
+          this.runId,
+        ),
       });
 
       return { orderId: order.id, decisionId: decision.id };
@@ -201,7 +211,10 @@ export class PrismaGuardStore implements GuardStore {
         },
       });
       const decision = await transaction.decision.create({
-        data: decisionData({ ...input.decision, orderId: order.id }),
+        data: decisionData(
+          { ...input.decision, orderId: order.id },
+          this.runId,
+        ),
       });
 
       return {

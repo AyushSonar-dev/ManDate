@@ -48,7 +48,10 @@ export function createApp(dependencies: AppDependencies = {}): Express {
   app.use('/mandates', mandatesRouter);
   app.use('/orders', createOrdersRouter(prismaClient));
   app.use('/scorecard', createScorecardRouter(prismaClient));
-  app.use('/agent', createAgentRouter(dependencies.agentRunner ?? null));
+  app.use(
+    '/agent',
+    createAgentRouter(dependencies.agentRunner ?? null, prismaClient),
+  );
 
   if (approvalService !== null) {
     app.use('/approvals', createApprovalsRouter(approvalService));

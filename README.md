@@ -25,28 +25,28 @@ npm run prisma:generate
 Run the API and web console in separate terminals:
 
 ```bash
-npm run dev      # API on http://localhost:3000
-npm run dev:web  # web console on http://localhost:3001
+npm run dev      # API on http://localhost:4000
+npm run dev:web  # web console on http://localhost:3000
 ```
 
-The API listens on `http://localhost:3000`. Check health:
+The API listens on the port set by `PORT` (default `4000`). Check health:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:4000/health
 # {"ok":true}
 ```
 
 ## Web console
 
-Open `http://localhost:3001`. The web app proxies `/api/*` to `API_BASE_URL` (default `http://localhost:3000`).
+Open `http://localhost:3000`. The web app proxies `/api/*` to `NEXT_PUBLIC_API_URL` (default `http://localhost:4000`).
 
 - `/mandate` creates and displays the current spending mandate.
-- `/run` runs the shopping agent and polls the audit log for live guarded decisions.
+- `/run` starts an asynchronous shopping-agent run, then polls it for status and guarded decisions.
 - `/approvals` lists pending approvals and resolves them.
 - `/orders/[id]` shows an order receipt, decision trail, rules, and approvals.
 - `/scorecard` shows the latest persisted red-team run.
 
-The supporting API endpoints are `GET /mandates/:id/decisions`, `GET /scorecard/latest`, and `POST /agent/runs`.
+Starting a run returns `202` with a run id immediately. The agent executes in the background, and the run moves to `COMPLETED` or `FAILED` with a readable error. The supporting API endpoints are `GET /mandates/:id/decisions`, `GET /scorecard/latest`, `POST /agent/runs`, and `GET /agent/runs/:id`.
 
 ## Shopping agent
 
@@ -56,7 +56,38 @@ Create a mandate through `POST /mandates`, then run the agent:
 npm run agent -- --mandate <id> "buy wireless headphones under 40 dollars"
 ```
 
-The agent searches the storefront, inspects full product pages, and calls the guarded PayPal `create_order` tool. Every reasoning step, tool call and tool result is logged. A blocked or approval-required order never reaches PayPal.
+The agent searches the storefront, receives full product pages from a single `search_catalog` call (at most 3 results), and calls the guarded PayPal `create_order` tool. Every reasoning step, tool call and tool result is logged. Runs are capped at 5 model steps, and a blocked or approval-required order never reaches PayPal.
+
+The web console starts runs asynchronously instead of holding the HTTP request open:
+
+```bash
+curl -X POST http://localhost:4000/agent/runs \
+  -H 'content-type: application/json' \
+  -d '{"mandateId":"<id>","prompt":"buy wireless headphones under 40 dollars"}'
+# 202 {"runId":"<run-id>","run_id":"<run-id>","status":"RUNNING"}
+
+curl http://localhost:4000/agent/runs/<run-id>
+# {"id":"<run-id>","status":"COMPLETED"|"FAILED", ..., "decisions":[...]}
+```
+
+## LLM providers
+
+`LLM_CHAIN` is an ordered list of `provider:model` entries. Supported providers are `groq`, `cerebras`, `gemini`, and `openrouter`. The agent only falls back to the next entry on an HTTP `429` or `5xx`, and never after a tool call has executed. Each entry uses one retry.
+
+```bash
+LLM_CHAIN=groq:llama-3.3-70b-versatile,cerebras:llama-3.3-70b,gemini:gemini-2.5-flash
+GROQ_API_KEY=...
+CEREBRAS_API_KEY=...
+GEMINI_API_KEY=...
+```
+
+Use an optional `INTENT_MODEL` to run the intent check on a different provider or model. Per-provider request budgets are configured with `LLM_RPM_GROQ`, `LLM_RPM_CEREBRAS`, `LLM_RPM_GEMINI`, and `LLM_RPM_OPENROUTER`; the agent waits instead of sending over-budget requests.
+
+Run the free-tier model check to verify each chain entry against the mock catalog. It uses a PayPal `create_order` spy, so it never calls PayPal:
+
+```bash
+npm run model-check
+```
 
 After the deterministic rules return `ALLOW`, a second intent check compares the user's original request with the proposed cart. Product names and other cart text are passed to the model as untrusted, delimited data. A partial or mismatched intent, malformed JSON, a model error, or a timeout all require approval. A deterministic `BLOCK` is never loosened. Configure the timeout with `INTENT_TIMEOUT_MS` (default 5000).
 
@@ -67,21 +98,21 @@ The mock catalog (`apps/api/data/catalog.json`) is the default and is used by te
 When the guard returns `REQUIRE_APPROVAL`, review the pending approval:
 
 ```bash
-curl http://localhost:3000/approvals?status=PENDING
+curl http://localhost:4000/approvals?status=PENDING
 ```
 
 Approving re-runs the guard before anything is sent to PayPal. If the order is still allowed, the API creates a PayPal sandbox order and returns `202 PENDING_BUYER_APPROVAL` with the approval link. Approve the order in the PayPal sandbox, then call approve again to capture it. Spent budget is only updated after a `COMPLETED` capture.
 
 ```bash
-curl -X POST http://localhost:3000/approvals/<id>/approve \
+curl -X POST http://localhost:4000/approvals/<id>/approve \
   -H 'content-type: application/json' \
   -d '{"approvedBy":"buyer"}'
 
-curl -X POST http://localhost:3000/approvals/<id>/reject \
+curl -X POST http://localhost:4000/approvals/<id>/reject \
   -H 'content-type: application/json' \
   -d '{"rejectedBy":"buyer"}'
 
-curl http://localhost:3000/orders/<order-id>/receipt
+curl http://localhost:4000/orders/<order-id>/receipt
 ```
 
 ## Red-team suite
